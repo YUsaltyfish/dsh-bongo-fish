@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dsh-bongo-fish · 菜单排版预览</title>
+<!--
+  这是**开发用**的排版预览页：不装 DSH、不重启客户端，直接双击用浏览器打开，
+  看的就是真实的 assets/widget.js 渲染出来的挂件与设置面板。
+  原理：页面里伪造一份 DSH 对话页的 DOM 契约（[data-composer-seat] / [data-composer-card] /
+  [data-composer-input]），挂件自己会认出来并吸附上去；素材清单取不到时会用内置占位图，
+  不影响看菜单排版。
+-->
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; font: 14px/1.6 system-ui, "Microsoft YaHei", sans-serif; background: #f2f4f7; }
+  .hint { position: fixed; top: 12px; left: 14px; max-width: 420px; color: #5a6672; font-size: 13px; }
+  .hint b { color: #2b3440; }
+  /* 伪造：对话页底部的输入区（跟 DSH 的布局同构，方便看贴合点对齐） */
+  .seat { position: fixed; left: 0; right: 0; bottom: 0; padding: 0 24px 12px; }
+  .card { position: relative; max-width: 760px; margin: 0 auto; background: #fff; border: .5px solid #0002;
+          border-radius: 14px; box-shadow: 0 6px 20px #0000000f; padding: 12px 14px; }
+  .input { min-height: 84px; outline: none; color: #2b3440; }
+  .fakebar { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); color: #98a2ad; font-size: 12px; }
+</style>
+</head>
+<body>
+  <div class="hint">
+    <b>菜单排版预览</b>（开发用）<br>
+    这一页加载的就是插件真实的 <code>assets/widget.js</code>。挂件会出现在下面那张卡片的上沿，
+    设置面板已自动打开。<br>
+    想动参数：右键挂件 / 点 ☰；想关掉面板：点挂件或按 Esc。
+  </div>
+  <div class="fakebar">↑ 下面是伪造的"对话页输入框"，只为给挂件一个可以吸附的目标</div>
+
+  <!-- 伪造 DSH 的输入区（DOM 契约与官方一致，挂件靠这三个标记定位） -->
+  <div class="seat" data-composer-seat>
+    <div class="card" data-composer-card>
+      <div class="input" contenteditable="true" role="textbox" aria-multiline="true" data-composer-input>在这里打字，挂件会跟着拍手…</div>
+    </div>
+  </div>
+
+  <!-- 真实插件脚本（相对路径：tools/ 的上一级就是包根） -->
+  <script src="../assets/widget.js"></script>
+  <script>
+    // 直接把设置面板打开，看排版；素材清单在 file:// 下取不到，会用内置占位小鲸鱼
+    setTimeout(function () {
+      if (window.dshBongoFish && window.dshBongoFish.openMenu) window.dshBongoFish.openMenu()
+    }, 350)
+  </script>
+</body>
+</html>

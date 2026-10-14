@@ -1,0 +1,64 @@
+{
+  "name": "dsh-bongo-fish",
+  "version": "0.3.0",
+  "description": "A BangoCat-style typing feedback widget that automatically snaps to the DSH composer and window edges, with customizable character art and sound effects.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "typing",
+    "keyboard",
+    "widget",
+    "pet",
+    "bongo-fish",
+    "whale",
+    "sound"
+  ],
+  "author": "YUsaltyfish",
+  "license": "MIT",
+  "type": "module",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YUsaltyfish/dsh-bongo-fish.git"
+  },
+  "homepage": "https://github.com/YUsaltyfish/dsh-bongo-fish#readme",
+  "bugs": {
+    "url": "https://github.com/YUsaltyfish/dsh-bongo-fish/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.1.0-rc.1"
+  },
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./locale/*": "./locale/*"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "icon.png",
+    "preview.png",
+    "locale",
+    "assets",
+    "tools"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
+
+
+
+

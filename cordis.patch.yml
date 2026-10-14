@@ -1,0 +1,24 @@
+# ============================================================================
+# dsh-bongo-fish —— DSH bundle patch（挂载声明）
+# ============================================================================
+# 这就是插件的"挂载声明"：DSH 启动时按 bundle 层栈叠加，把本插件插入 profile。
+#
+# 安装（把这个目录装进当前 profile）：
+#   桌面端：在桌面端会话里让 AI 用内置 plugin_manager 安装 link:<本目录绝对路径>
+#   网页端：dsh plugin --profile web add link:<本目录绝对路径>
+#
+# 可选配置（想让素材放在别处时用；config 是**整段替换**，改的时候把要留的键一起写上）：
+#
+# - id: dsh-bongo-fish
+#   config:
+#     userDir: 'D:\我的打字挂件'
+#     artDir: 'D:\我的打字挂件\art'      # 里面放 rest.png / hit.png（也可以 gif/webp/jpg/svg）
+#     soundDir: 'D:\我的打字挂件\sounds'  # 里面放 hit.wav / release.wav
+#
+# 也可以用环境变量：DSH_BONGO_FISH_USER_DIR / _ART_DIR / _SOUND_DIR
+# ============================================================================
+
+- insert:
+    - id: dsh-bongo-fish
+      name: dsh-bongo-fish
+
