@@ -1,11 +1,11 @@
-/* ============================================================================
+﻿/* ============================================================================
  * dsh-bongo-fish · 浏览器半（Browser half）
  * ----------------------------------------------------------------------------
  * 一只带爪子的小鲸鱼：在 DSH 输入框里每敲一下键，爪子拍下去（切换"拍下"图层）
  * 并播放音效；位置可选「贴上沿 / 贴下沿 / 自由磁吸」，右键或 ☰ 打开菜单。
  *
  * 三个关键实现点：
- *   ① 图层：两张贴图叠着放（rest 在下、hit 在上），拍下瞬间把 hit 的
+ *   ① 图层：独立图标由插件布局并复制成左右手（up 在下、down 在上），拍下瞬间把 hit 的
  *      opacity 切到 1、rest 切到 0 —— 用 CSS transition 0.02s 做到"快速切换"。
  *   ② 位置：外层节点只负责 translate3d 定位；拍下位移/缩放放在内层 .dsbf-stage；
  *      再内层 .dsbf-flip 负责镜像、.dsbf-art 负责待机摇摆 —— 四层各管一件事，
@@ -21,7 +21,7 @@
   if (window.__dshBongoFish) return
 
   var BASE = '/dsh-bongo-fish'
-  var VERSION = '0.3.0'
+  var VERSION = '0.4.1'
   var EVENTS_PATH = BASE + '/events'
   var STORE = 'dsh-bongo-fish:v1'
   var DEBUG = /[?&]dsh-bongo-fish-debug=1/.test(location.search)
@@ -49,19 +49,23 @@
 
   // ---------------------------------------------------------------- 配置
   var DEFAULTS = {
+    mirrorHands: false,
+    style: 'normal', handWidth: 25, handRatio: 76, handGap: 35, handAxis: 50, handY: 82,
+    downY: 8, downScale: 100, bodyWidth: 100, bodyX: 50, bodyY: 50,
+    bounceHeight: 36, bounceDuration: 260, downVariant: 'default',
     mode: 'top',        // top=贴合点对齐卡片上沿 bottom=对齐下沿 snap=自由磁吸
     side: 'right',      // left / center / right：贴图盒子贴卡片哪一侧
     inside: false,      // 贴合点落到卡片内侧一点（嵌入变体被 overflow 裁时用）
     size: 176,          // 贴图显示宽度 px（高度按素材比例自动算）；菜单里有小/中/大/特大四档预设
     gap: 0,             // 贴图与卡片边缘的间距（默认 0 = 贴合点正好压在边线上）
     anchorX: 50,        // 贴合点：横向位置（占图宽 %）—— 默认横向居中（1499 图里的 750px）
-    anchorY: 72.06,     // 贴合点：纵向位置（占图高 %）—— 默认 = 静止轮廓底边（1070 图里的 771px）
+    anchorY: 100,     // 贴合点：纵向位置（占图高 %）—— 默认 = 静止轮廓底边（1070 图里的 771px）
     // 交互区（占图宽/高 %）：默认 = "静止轮廓"（本体 + 双手举着）的实测范围
     // —— 透明空白（下面 27.9%、左边 13.3%）不吃鼠标，不挡别处的点击与右键
-    hitLeft: 13.34,
-    hitTop: 1.31,
-    hitRight: 97.6,
-    hitBottom: 72.06,
+    hitLeft: 0,
+    hitTop: 0,
+    hitRight: 100,
+    hitBottom: 100,
     holdMs: 200,        // 「拍下」保持多久再回到「举着」（0.2s 左右最像打字）
     clawMode: 'flash',  // flash=敲一下拍一下立刻回位；toggle=保持拍下状态，下次敲键换手
     handMode: 'random', // random=每次随机左右手；noRepeat=随机但不连同一只；alternate=严格交替
@@ -73,6 +77,7 @@
     bodyKick: false,    // 拍下时本体也抖一下（默认关：保持本体不动）
     volume: 60,         // 0-100
     sound: true,
+    rhythmSound: false, // 用户显式开启后使用水滴律动；关闭保留原音效。
     pitchJitter: 8,     // 音高随机 ±N%（避免机械重复感）
     minGapMs: 25,       // 两次拍下的最小间隔（长按/高速输入不糊）
     bob: false,         // 待机摇摆（默认关：本体保持不动）
@@ -81,6 +86,24 @@
     snap: { ref: 'viewport', x: 24, y: 180 },
   }
 
+  var HAND_KEYS = ['mirrorHands','handMode','handWidth','handRatio','handGap','handAxis','handY','downY','downScale','bounceHeight','bounceDuration']
+  var HAND_DEFAULTS = {
+    normal: {mirrorHands:false,handMode:'random',handWidth:25,handRatio:76,handGap:53.3,handAxis:41.6,handY:82.2,downY:8,downScale:100,bounceHeight:36,bounceDuration:260},
+    bounce: {mirrorHands:false,handMode:'random',handWidth:18.6,handRatio:73,handGap:44.6,handAxis:39.9,handY:90.7,downY:8,downScale:100,bounceHeight:36,bounceDuration:260}
+  }
+  function newHandProfiles() { return JSON.parse(JSON.stringify(HAND_DEFAULTS)) }
+  function loadHandProfile(out, mode) {
+    HAND_KEYS.forEach(function(k){out[k]=out.handProfiles[mode][k]})
+  }
+  function captureHandProfile() {
+    if(!cfg.handProfiles)cfg.handProfiles=newHandProfiles()
+    HAND_KEYS.forEach(function(k){cfg.handProfiles[cfg.style][k]=cfg[k]})
+  }
+  function switchHandStyle(mode) {
+    captureHandProfile()
+    cfg.style=mode;loadHandProfile(cfg,mode)
+    clearHeld();applySize();syncMenu()
+  }
   var cfg = readCfg()
   function readCfg() {
     var out = JSON.parse(JSON.stringify(DEFAULTS))
@@ -91,9 +114,38 @@
         for (var k in saved) if (Object.prototype.hasOwnProperty.call(saved, k)) out[k] = saved[k]
       }
     } catch (e) {}
+    // 新版布局不沿用旧整画布的裁剪/贴合点；其余偏好保留。
+    if (out.layoutVersion !== 2) {
+      ;['anchorX','anchorY','hitLeft','hitTop','hitRight','hitBottom'].forEach(function(k){out[k]=DEFAULTS[k]})
+      out.layoutVersion = 2
+    }
+    Object.keys(DEFAULTS).forEach(function(k){
+      if(typeof DEFAULTS[k] === 'number') {
+        var n=Number(out[k]); out[k]=isFinite(n)?clamp(n,0,Math.max(DEFAULTS[k]*4,200)):DEFAULTS[k]
+      }
+    })
+    if(out.handMode==='noRepeat') out.handMode='alternate'
+    if(out.style !== 'bounce') out.style='normal'
+    var profiles=newHandProfiles()
+    if(out.handProfilesVersion===1 && out.handProfiles && typeof out.handProfiles==='object') {
+      ;['normal','bounce'].forEach(function(mode){
+        var savedProfile=out.handProfiles[mode]
+        if(!savedProfile || typeof savedProfile!=='object')return
+        HAND_KEYS.forEach(function(k){
+          var value=savedProfile[k]
+          if(typeof HAND_DEFAULTS[mode][k]==='number') {
+            var num=Number(value);if(value!==undefined && isFinite(num))profiles[mode][k]=clamp(num,0,Math.max(HAND_DEFAULTS[mode][k]*4,200))
+          } else if(k==='mirrorHands' && typeof value==='boolean')profiles[mode][k]=value
+          else if(k==='handMode' && (value==='random'||value==='alternate'))profiles[mode][k]=value
+        })
+      })
+    }
+    // 首次引入独立配置时按用户给出的两套截图初始化，不沿用旧的共享布局。
+    out.handProfiles=profiles;out.handProfilesVersion=1;loadHandProfile(out,out.style)
     return out
   }
   function saveCfg() {
+    captureHandProfile()
     try { localStorage.setItem(STORE, JSON.stringify(cfg)) } catch (e) {}
   }
   function nowMs() {
@@ -102,7 +154,7 @@
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v) }
 
   // ---------------------------------------------------------------- 占位双手图层
-  // 本体一张 + 左手举着/拍下 + 右手举着/拍下，五张同画布叠着放。
+  // 本体与手部都是独立图标；左右手复用相同素材并镜像。
   // 敲键时只切"被选中的那只手"，本体与另一只手都不动。
   function fallbackSvg(kind) {
     var head = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">'
@@ -116,22 +168,8 @@
       '<ellipse cx="26" cy="67" rx="5" ry="3" fill="#f2a0ad" opacity=".75"/>' +
       '<path d="M40 70q4 4 8 0" stroke="#1b2b3a" stroke-width="2" fill="none" stroke-linecap="round"/>'
     if (kind === 'body') return head + body + '</svg>'
-    var down = kind.indexOf('down') >= 0
-    var left = kind.indexOf('left') >= 0
-    var sx = left ? 38 : 58          // 肩点 x（96 坐标系）
-    var px = left ? 29 : 67          // 爪心 x
-    var py = down ? 82 : 59          // 爪心 y
-    var claw =
-      '<path d="M' + sx + ' 74 L' + (px + (left ? 2 : -2)) + ' ' + (py + 3) + '" stroke="#3a7fc4" ' +
-      'stroke-width="7" fill="none" stroke-linecap="round"/>' +
-      '<circle cx="' + px + '" cy="' + py + '" r="7.5" fill="#f6c453"/>' +
-      '<circle cx="' + px + '" cy="' + (py + 5) + '" r="2.6" fill="#e0a92f"/>'
-    if (down) {
-      claw += '<path d="M' + (px - 10) + ' ' + (py + 12) + 'l-3 4M' + px + ' ' + (py + 14) + 'l0 5M' +
-        (px + 10) + ' ' + (py + 12) + 'l3 4" stroke="#f6c453" stroke-width="2.2" fill="none" ' +
-        'stroke-linecap="round" opacity=".95"/>'
-    }
-    return head + claw + '</svg>'
+    return head + '<ellipse cx="48" cy="48" rx="40" ry="35" fill="#ffede6" stroke="#1c285e" stroke-width="7"/></svg>'
+
   }
 
   // ---------------------------------------------------------------- 样式
@@ -188,6 +226,26 @@
       '.dsbf-note code{font-size:11px}' +
       '@keyframes dsbf-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}' +
       '@media (prefers-reduced-motion: reduce){.dsbf-art{animation:none}}'
+    css += '.dsbf-body{inset:auto;transform:translate(-50%,-50%)}' +
+      '.dsbf-hand{position:absolute;pointer-events:none;transform:translate(-50%,-50%)}' +
+      '.dsbf-hand-motion{position:absolute;inset:0;transform-origin:50% 100%;will-change:transform;transition:none;animation:none}' +
+      '.dsbf-hand .dsbf-layer{inset:0;width:100%;height:100%;object-fit:fill;transition:none}' +
+      '.dsbf-hand-right .dsbf-hand-motion{scale:-1 1}' +
+      '.dsbf-bounce{display:none}' +
+      '.dsbf-art.is-bounce .dsbf-bounce{display:block}' +
+      '.dsbf-art.is-bounce .dsbf-claw-left-up,.dsbf-art.is-bounce .dsbf-claw-left-down,' +
+      '.dsbf-art.is-bounce .dsbf-claw-right-up,.dsbf-art.is-bounce .dsbf-claw-right-down{display:none}' +
+      '.dsbf-reset{border:0;background:transparent;color:inherit;cursor:pointer;padding:3px}'
+    css += '.dsbf-menu{width:350px;min-width:0}' +
+      '.dsbf-tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid #8883;padding-bottom:8px;margin-bottom:8px}' +
+      '.dsbf-tab{border:0;border-radius:6px;padding:5px 7px;background:transparent;color:inherit;cursor:pointer;font:inherit}' +
+      '.dsbf-tab.active{background:#356acb;color:white}' +
+      '.dsbf-page{min-height:210px}' +
+      '.dsbf-pagination{display:flex;align-items:center;gap:12px;border-top:1px solid #8883;padding-top:8px;margin-top:8px}' +
+      '.dsbf-page-count{white-space:nowrap;color:var(--dsw-alias-label-secondary,#5a6672)}'
+    css += '.dsbf-asset{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #8882}' +
+      '.dsbf-asset-preview{width:58px;height:58px;object-fit:contain;border-radius:7px;background:repeating-conic-gradient(#8882 0% 25%,transparent 0% 50%) 0 0/12px 12px}' +
+      '.dsbf-asset-controls{flex:1;min-width:0}.dsbf-asset-controls .dsbf-note{margin:2px 0 6px;overflow-wrap:anywhere}'
     var style = document.createElement('style')
     style.id = 'dsbf-style'
     style.textContent = css
@@ -203,10 +261,16 @@
     '<div class="dsbf-stage">' +
       '<div class="dsbf-flip"><div class="dsbf-art">' +
         '<img class="dsbf-layer dsbf-body" alt="" draggable="false">' +
-        '<img class="dsbf-layer dsbf-claw-left-up" alt="" draggable="false">' +
-        '<img class="dsbf-layer dsbf-claw-left-down" alt="" draggable="false">' +
-        '<img class="dsbf-layer dsbf-claw-right-up" alt="" draggable="false">' +
-        '<img class="dsbf-layer dsbf-claw-right-down" alt="" draggable="false">' +
+        '<div class="dsbf-hand dsbf-hand-left"><div class="dsbf-hand-motion">' +
+          '<img class="dsbf-layer dsbf-claw-left-up" alt="" draggable="false">' +
+          '<img class="dsbf-layer dsbf-claw-left-down" alt="" draggable="false">' +
+          '<img class="dsbf-layer dsbf-bounce dsbf-bounce-left" alt="" draggable="false">' +
+        '</div></div>' +
+        '<div class="dsbf-hand dsbf-hand-right"><div class="dsbf-hand-motion">' +
+          '<img class="dsbf-layer dsbf-claw-right-up" alt="" draggable="false">' +
+          '<img class="dsbf-layer dsbf-claw-right-down" alt="" draggable="false">' +
+          '<img class="dsbf-layer dsbf-bounce dsbf-bounce-right" alt="" draggable="false">' +
+        '</div></div>' +
       '</div></div>' +
     '</div>' +
     '<div class="dsbf-hitbox" title="拖动可换位置；右键打开设置"></div>' +
@@ -257,6 +321,7 @@
     hitbox.style.width = px(m.hit.width) + 'px'
     hitbox.style.height = px(m.hit.height) + 'px'
     artEl.style.setProperty('--dsbf-dip', Math.round(cfg.clawDip) + 'px')
+    applyParts()
     artEl.classList.toggle('no-bob', !cfg.bob || prefersReducedMotion())
     // 菜单按钮跟着尺寸走，摆在交互区左上角外侧，不挡角色
     var btnSize = Math.max(18, Math.round(m.hit.width * 0.16))
@@ -268,6 +333,64 @@
     btn.style.top = px(m.hit.top) + 'px'
   }
 
+  var springs = {}, springFrame = 0
+  function springFor(side) {
+    if (!springs[side]) springs[side]={y:0,v:0,q:0,qv:0,target:0,last:0}
+    return springs[side]
+  }
+  function runSprings(time) {
+    if (typeof time !== 'number') time = nowMs()
+    springFrame=0
+    var moving=false
+    ;['left','right'].forEach(function(side){
+      var s=springFor(side),dt=Math.min(1/30,Math.max(.001,(time-(s.last||time-16))/1000))
+      s.last=time
+      var speed=260/Math.max(80,cfg.bounceDuration)
+      var stiffness=(s.target ? 2600 : 1100)*speed*speed, damping=(s.target ? 46 : 26)*speed
+      var steps=Math.ceil(dt*240), h=dt/steps
+      for(var i=0;i<steps;i++) {
+        s.v+=((s.target-s.y)*stiffness-s.v*damping)*h;s.y+=s.v*h
+        var squash=s.target ? .26*Math.pow(Math.max(0,s.y/Math.max(.01,s.target)),1.18):0
+        s.qv+=((squash-s.q)*1100-s.qv*25)*h;s.q+=s.qv*h
+      }
+      if(cfg.style!=='bounce') return
+      var motion=root.querySelector('.dsbf-hand-'+side).querySelector('.dsbf-hand-motion')
+      motion.style.transform='translateY('+px(s.y)+'%) scale('+px(1+s.q*.58)+','+px(1-s.q*.74)+')'
+      if(Math.abs(s.y-s.target)>.01 || Math.abs(s.v)>.1 || Math.abs(s.q-(s.target?.26:0))>.001 || Math.abs(s.qv)>.01) moving=true
+    })
+    if(moving) springFrame=raf(runSprings)
+  }
+  function applyParts() {
+    if (ui) syncModeControls()
+    root.querySelector('.dsbf-hand-right').querySelector('.dsbf-hand-motion').style.scale = cfg.mirrorHands ? '-1 1' : '1 1'
+    artEl.classList.toggle('is-bounce', cfg.style === 'bounce')
+    imgBody.style.width = cfg.bodyWidth + '%'
+    imgBody.style.height = cfg.bodyWidth + '%'
+    imgBody.style.left = cfg.bodyX + '%'
+    imgBody.style.top = cfg.bodyY + '%'
+    ;['left','right'].forEach(function(side) {
+      var h = root.querySelector('.dsbf-hand-' + side)
+      h.style.width = cfg.handWidth + '%'
+      h.style.height = (cfg.handWidth * cfg.handRatio / 100 / artRatio) + '%'
+      h.style.left = (cfg.handAxis + (side === 'left' ? -1 : 1) * cfg.handGap / 2) + '%'
+      h.style.top = cfg.handY + '%'
+      var down = side === 'left' ? imgLeftDown : imgRightDown
+      down.style.transform = 'scale(' + cfg.downScale / 100 + ')'
+      animateHand(side, stage.classList.contains('is-hit-' + side))
+    })
+  }
+  function animateHand(side, held) {
+    var s=springFor(side)
+    if(cfg.style!=='bounce') {
+      s.target=0;s.y=0;s.v=0;s.q=0;s.qv=0
+      root.querySelector('.dsbf-hand-'+side).querySelector('.dsbf-hand-motion').style.transform='translateY(' + (held ? cfg.downY : 0) + '%)'
+      return
+    }
+    s.target=held ? cfg.bounceHeight : 0
+    if(prefersReducedMotion()) {s.y=s.target;s.v=0;s.q=0;s.qv=0}
+    s.last=0
+    if(!springFrame) springFrame=raf(runSprings)
+  }
   // 贴图盒子尺寸 + 贴合点在盒子里的位置 + 交互区（都按素材比例算出来）
   //   · 盒子按整张画布走（不然 <img> 会被拉伸）
   //   · 但对齐、鼠标、菜单、视口兜底都只认"交互区 = 静止轮廓"，透明空白当它不存在
@@ -310,6 +433,219 @@
   var soundSource = '未加载'
   var soundCount = 0
 
+  // 图片独立存于 IndexedDB，不挤占设置存储，不上传到远端。
+  var customArt = {}, artDbPromise = null, assetStatus = {}, assetPreviews = {}
+  var ART_SLOTS = [['body','本体图片'],['handUp','正常手 · 上手'],['handDown','正常手 · 下手'],['handBounce','萌圆手']]
+  function artDb() {
+    if (!artDbPromise) artDbPromise = new Promise(function(resolve,reject){
+      if(!win.indexedDB) {reject(new Error('当前浏览器未开放本地图片存储'));return}
+      var req=win.indexedDB.open('dsh-bongo-fish-art',1)
+      req.onupgradeneeded=function(){req.result.createObjectStore('images')}
+      req.onsuccess=function(){resolve(req.result)}
+      req.onerror=function(){reject(req.error || new Error('打开图片存储失败'))}
+    })
+    return artDbPromise
+  }
+  function storeArt(key,value) {
+    return artDb().then(function(db){return new Promise(function(resolve,reject){
+      var tx=db.transaction('images','readwrite'),store=tx.objectStore('images')
+      if(value)store.put(value,key);else store.delete(key)
+      tx.oncomplete=resolve;tx.onerror=function(){reject(tx.error)};tx.onabort=function(){reject(tx.error)}
+    })})
+  }
+  function loadCustomArt() {
+    return artDb().then(function(db){return Promise.all(ART_SLOTS.map(function(slot){return new Promise(function(resolve,reject){
+      var r=db.transaction('images','readonly').objectStore('images').get(slot[0])
+      r.onsuccess=function(){if(r.result)customArt[slot[0]]=r.result;resolve()};r.onerror=function(){reject(r.error)}
+    })}))}).then(function(){applyArtSources()}).catch(function(e){log('自定义图片存储未就绪',e)})
+  }
+  // 内置样式只需在此登记；默认项继续兼容用户目录素材。不会自动轮播。
+  var BUILTIN_STYLES = {
+    body: [{id:'default',name:'默认本体'}],
+    handUp: [{id:'default',name:'默认上手'}],
+    handDown: [{id:'default',name:'默认下手'},{id:'alternate',name:'下手 · 样式二',artKey:'handDownAlt'}],
+    handBounce: [{id:'default',name:'默认萌圆手'}],
+    soundHit: [{id:'default',name:'默认音效'},{id:'water',name:'水滴声',url:BASE+'/rhythm-water.mp3'}]
+  }
+  var assetCyclers = {}
+  function selectedStyle(key) { return cfg['assetStyle_'+key] || 'custom' }
+  function styleOptions(key) {
+    var list=(BUILTIN_STYLES[key] || []).slice()
+    if(key==='soundHit' ? customSound : customArt[key]) list.push({id:'custom',name:'自定义：'+(key==='soundHit'?customSound.name:customArt[key].name)})
+    return list
+  }
+  function activeStyle(key) {
+    var list=styleOptions(key),id=selectedStyle(key)
+    return list.filter(function(s){return s.id===id})[0] || list[0]
+  }
+  function syncCyclers() {
+    Object.keys(assetCyclers).forEach(function(key){
+      var list=styleOptions(key), current=activeStyle(key), c=assetCyclers[key]
+      c.label.textContent=current.name+' ('+(list.map(function(s){return s.id}).indexOf(current.id)+1)+'/'+list.length+')'
+      c.prev.disabled=c.next.disabled=list.length<2
+    })
+  }
+  function buildStyleCycler(key) {
+    var prev=el('button','dsbf-btn2','‹'),next=el('button','dsbf-btn2','›'),label=el('span','dsbf-style-name')
+    prev.type=next.type='button';prev.name='dsbf-style-prev-'+key;next.name='dsbf-style-next-'+key
+    prev.setAttribute('aria-label','上一个样式');next.setAttribute('aria-label','下一个样式')
+    function turn(delta) {
+      var list=styleOptions(key),at=list.map(function(s){return s.id}).indexOf(activeStyle(key).id),choice=list[(at+delta+list.length)%list.length]
+      cfg['assetStyle_'+key]=choice.id;saveCfg()
+      if(key==='soundHit') {activateSoundStyle();syncSoundAsset()} else applyArtSources()
+    }
+    prev.addEventListener('click',function(){turn(-1)});next.addEventListener('click',function(){turn(1)})
+    assetCyclers[key]={prev:prev,next:next,label:label}
+    return group([prev,label,next])
+  }
+  function applyArtSources() {
+    var a=Object.assign({},manifest && manifest.art || {})
+    ART_SLOTS.forEach(function(slot){var key=slot[0],choice=activeStyle(key)
+      if(choice.id==='custom' && customArt[key])a[key]=customArt[key].data
+      else if(choice.artKey)a[key]=a[choice.artKey] || a[key]
+      if(assetStatus[key])assetStatus[key].textContent=choice.name
+      if(assetPreviews[key]){assetPreviews[key].src=a[key]||svgUrl(key==='body'?'body':'hand')}
+    })
+    wireArt(imgBody,a.body||svgUrl('body'),'body',function(){imgBody.src=svgUrl('body')})
+    ;[imgLeftUp,imgRightUp].forEach(function(img){wireArt(img,a.handUp||svgUrl('hand'),'hand-up')})
+    var down=a.handDown
+    ;[imgLeftDown,imgRightDown].forEach(function(img){wireArt(img,down||svgUrl('hand'),'hand-down')})
+    ;['left','right'].forEach(function(side){wireArt(root.querySelector('.dsbf-bounce-'+side),a.handBounce||svgUrl('hand'),'hand-bounce')})
+    syncCyclers()
+    applyParts()
+  }
+  function importArt(key,file) {
+    if(!file)return Promise.resolve()
+    var status=assetStatus[key]
+    if(file.size>10*1024*1024){status.textContent='请选择10MB以内的图片';return Promise.resolve()}
+    if(!/^image\/(png|jpeg|webp|gif)$/.test(file.type)){status.textContent='支持 PNG、JPG、WebP、GIF';return Promise.resolve()}
+    status.textContent='正在读取…'
+    return new Promise(function(resolve,reject){
+      var reader=new FileReader()
+      reader.onerror=function(){reject(new Error('读取图片失败'))}
+      reader.onload=function(){
+        var img=new Image()
+        img.onerror=function(){reject(new Error('图片内容读取失败'))}
+        img.onload=function(){
+          if(img.naturalWidth>8192 || img.naturalHeight>8192){reject(new Error('图片边长请控制在8192像素以内'));return}
+          resolve({data:reader.result,name:file.name})
+        };img.src=reader.result
+      };reader.readAsDataURL(file)
+    }).then(function(value){return storeArt(key,value).then(function(){customArt[key]=value;cfg['assetStyle_'+key]='custom';saveCfg();applyArtSources()})})
+      .catch(function(e){status.textContent='保存失败：'+(e.message||e)})
+  }
+  function buildAssetPage(page) {
+    page.appendChild(el('div','dsbf-note','选择本机图片即可替换，自动保存在当前浏览器。左右手共用一份；推荐透明PNG，单张≤10MB。'))
+    ART_SLOTS.forEach(function(slot){
+      var key=slot[0],card=el('div','dsbf-asset'),preview=el('img','dsbf-asset-preview'),controls=el('div','dsbf-asset-controls')
+      preview.alt=slot[1];assetPreviews[key]=preview
+      controls.appendChild(el('strong',null,slot[1]))
+      controls.appendChild(buildStyleCycler(key))
+      var status=el('div','dsbf-note','默认素材');assetStatus[key]=status;controls.appendChild(status)
+      var input=el('input');input.type='file';input.accept='image/png,image/jpeg,image/webp,image/gif';input.style.display='none'
+      input.addEventListener('change',function(){importArt(key,input.files && input.files[0]);input.value=''})
+      var choose=el('button','dsbf-btn2','选择图片'),reset=el('button','dsbf-btn2','恢复默认');choose.type=reset.type='button'
+      choose.addEventListener('click',function(){input.click()})
+      reset.addEventListener('click',function(){cfg['assetStyle_'+key]='default';saveCfg();applyArtSources()})
+      controls.appendChild(group([choose,reset]));card.appendChild(preview);card.appendChild(controls);card.appendChild(input);page.appendChild(card)
+    })
+    buildSoundAsset(page)
+    applyArtSources()
+  }
+
+  var customSound = null, customSoundBuffer = null, soundAssetStatus = null
+  var soundChange = 0, presetSoundBuffer = null, presetSoundId = '', presetLoadRevision = 0
+  function activateSoundStyle() {
+    var choice=activeStyle('soundHit'),revision=++presetLoadRevision
+    presetSoundBuffer=null;presetSoundId=''
+    if(!choice.url || !net)return Promise.resolve()
+    return net(choice.url,{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('音效读取失败');return r.arrayBuffer()})
+      .then(decodeCustomSound).then(function(decoded){
+        if(revision!==presetLoadRevision || activeStyle('soundHit').id!==choice.id)return
+        presetSoundBuffer=decoded;presetSoundId=choice.id;syncSoundAsset()
+      }).catch(function(e){if(revision===presetLoadRevision && soundAssetStatus)soundAssetStatus.textContent=choice.name+'加载失败：'+(e.message||e)})
+  }
+  function syncSoundAsset() {
+    var choice=activeStyle('soundHit')
+    if (soundAssetStatus) soundAssetStatus.textContent = choice.name
+    syncCyclers()
+    if (choice.id==='custom' && customSound) { soundSource = '本地自定义：' + customSound.name; soundCount = 1 }
+    else if(choice.url){soundSource='随包：'+choice.name;soundCount=1}
+    else {
+      var d = manifest && manifest.dirs || {}
+      soundSource = (d.sources && d.sources['sound:hit']) || d.builtinSoundDir || '未加载'
+      var hit = manifest && manifest.sounds && manifest.sounds.hit
+      soundCount = hit ? (typeof hit === 'string' ? 1 : hit.length) : 0
+    }
+    syncMenuInfo()
+  }
+  function decodeCustomSound(bytes) {
+    return new Promise(function(resolve,reject){
+      var ctx = audioCtx()
+      if (!ctx) { reject(new Error('当前环境没有可用的音频解码器')); return }
+      ctx.decodeAudioData(bytes.slice(0), resolve, reject)
+    })
+  }
+  function importSound(file) {
+    if (!file) return Promise.resolve(false)
+    if (file.size > 10*1024*1024 || file.size <= 0) {
+      if (soundAssetStatus) soundAssetStatus.textContent = '请选择非空且不超过10MB的音频'
+      return Promise.resolve(false)
+    }
+    if (!/\.(wav|mp3|ogg|m4a|aac|flac|webm)$/i.test(file.name || '')) {
+      if (soundAssetStatus) soundAssetStatus.textContent = '支持 WAV、MP3、OGG、M4A、AAC、FLAC、WebM'
+      return Promise.resolve(false)
+    }
+    var revision = ++soundChange
+    if (soundAssetStatus) soundAssetStatus.textContent = '正在读取并验证音效…'
+    return Promise.resolve().then(function(){ return file.arrayBuffer() }).then(function(bytes){
+      return decodeCustomSound(bytes).then(function(decoded){
+        if (revision !== soundChange) return false
+        var value = { name:file.name, data:bytes }
+        return storeArt('soundHit',value).then(function(){
+          if (revision !== soundChange) return false
+          customSound=value;customSoundBuffer=decoded;cfg.assetStyle_soundHit='custom';saveCfg();activateSoundStyle();syncSoundAsset();return true
+        })
+      })
+    }).catch(function(e){
+      if (revision === soundChange && soundAssetStatus) soundAssetStatus.textContent='音效保存失败（原音效保留）：'+(e.message||e)
+      return false
+    })
+  }
+  function resetSound() {
+    ++soundChange
+    return storeArt('soundHit',null).then(function(){
+      customSound=null;customSoundBuffer=null;cfg.assetStyle_soundHit='default';saveCfg();activateSoundStyle();syncSoundAsset();return true
+    }).catch(function(e){if(soundAssetStatus)soundAssetStatus.textContent='恢复失败：'+(e.message||e);return false})
+  }
+  function loadCustomSound() {
+    var revision=soundChange
+    return artDb().then(function(db){return new Promise(function(resolve,reject){
+      var request=db.transaction('images','readonly').objectStore('images').get('soundHit')
+      request.onsuccess=function(){resolve(request.result)};request.onerror=function(){reject(request.error)}
+    })}).then(function(value){
+      if (!value || !value.data) return
+      return decodeCustomSound(value.data).then(function(decoded){
+        if(revision!==soundChange)return
+        customSound=value;customSoundBuffer=decoded;syncSoundAsset()
+      })
+    }).catch(function(e){log('自定义音效未加载，继续使用默认音效',e)})
+  }
+  function buildSoundAsset(page) {
+    var card=el('div','dsbf-asset'),controls=el('div','dsbf-asset-controls')
+    controls.appendChild(el('strong',null,'按键音效'))
+    controls.appendChild(buildStyleCycler('soundHit'))
+    soundAssetStatus=el('div','dsbf-note','默认音效');controls.appendChild(soundAssetStatus)
+    controls.appendChild(el('div','dsbf-note','箭头选择内置音效，选中后固定使用；也可上传本机音频（≤10MB）。律动开关开启时优先使用律动音效，关闭后恢复此处选择。'))
+    var input=el('input');input.type='file';input.name='dsbf-customSound';input.accept='audio/*,.wav,.mp3,.ogg,.m4a,.aac,.flac,.webm';input.style.display='none'
+    input.addEventListener('change',function(){importSound(input.files && input.files[0]);input.value=''})
+    var choose=el('button','dsbf-btn2','选择音效'),preview=el('button','dsbf-btn2','试听'),reset=el('button','dsbf-btn2','恢复默认音效')
+    choose.type=preview.type=reset.type='button'
+    choose.addEventListener('click',function(){input.click()})
+    preview.addEventListener('click',function(){play('hit')})
+    reset.addEventListener('click',function(){resetSound()})
+    controls.appendChild(group([choose,preview,reset]));card.appendChild(controls);card.appendChild(input);page.appendChild(card)
+  }
   function wireArt(img, url, label, onFail) {
     if (!url) return
     img.onerror = function () {
@@ -330,39 +666,11 @@
         manifest = m
         var d = m.dirs || {}
         var a = m.art || {}
-        var claws = [imgLeftUp, imgLeftDown, imgRightUp, imgRightDown]
-        for (var ci = 0; ci < claws.length; ci++) claws[ci].style.display = ''
-        if (m.artMode === 'hands') {
-          // 推荐：本体一张 + 左右手各两张，敲键随机挑一只手
-          twoHands = true
-          artModeLabel = '双手五图层（本体 + 左右手）'
-          artSource = srcLabel(d.sources && d.sources['art:body'], d.builtinArtDir)
-          wireArt(imgBody, a.body, 'body', function () { imgBody.src = svgUrl('body') })
-          wireArt(imgLeftUp, a.clawLeftUp, 'claw-left-up', function () { imgLeftUp.src = svgUrl('clawLeftUp') })
-          wireArt(imgLeftDown, a.clawLeftDown, 'claw-left-down', function () { imgLeftDown.src = svgUrl('clawLeftDown') })
-          wireArt(imgRightUp, a.clawRightUp, 'claw-right-up', function () { imgRightUp.src = svgUrl('clawRightUp') })
-          wireArt(imgRightDown, a.clawRightDown, 'claw-right-down', function () { imgRightDown.src = svgUrl('clawRightDown') })
-        } else if (m.artMode === 'layers') {
-          // 单手素材：全部走左手那一组，右手两组收起
-          twoHands = false
-          artModeLabel = '单手三图层（本体 + 爪子两张）'
-          artSource = srcLabel(d.sources && d.sources['art:body'], d.builtinArtDir)
-          wireArt(imgBody, a.body, 'body', function () { imgBody.src = svgUrl('body') })
-          wireArt(imgLeftUp, a.clawUp, 'claw-up', function () { imgLeftUp.src = svgUrl('clawLeftUp') })
-          wireArt(imgLeftDown, a.clawDown, 'claw-down', function () { imgLeftDown.src = svgUrl('clawLeftDown') })
-          hideLayer(imgRightUp)
-          hideLayer(imgRightDown)
-        } else if (m.artMode === 'swap') {
-          // 兼容：两张整图各自含本体 → 本体层放 rest、拍下层放 hit
-          twoHands = false
-          artModeLabel = '两张整图（rest / hit）'
-          artSource = srcLabel(d.sources && d.sources['art:rest'], d.builtinArtDir)
-          wireArt(imgBody, a.rest, 'rest', function () { imgBody.src = svgUrl('body') })
-          wireArt(imgLeftDown, a.hit, 'hit', function () { imgLeftDown.src = svgUrl('clawLeftDown') })
-          hideLayer(imgLeftUp)
-          hideLayer(imgRightUp)
-          hideLayer(imgRightDown)
-        }
+        twoHands = true
+        artModeLabel = '独立部件（左右共用图片，可选右手翻转）'
+        artSource = srcLabel(d.sources && d.sources['art:body'], d.builtinArtDir)
+        applyArtSources()
+        activateSoundStyle()
         if (m.sounds && m.sounds.hit && m.sounds.hit.length) {
           // 说明区要的是"音效路径"本身，直接给解析出来的目录
           soundCount = typeof m.sounds.hit === 'string' ? 1 : m.sounds.hit.length
@@ -372,6 +680,7 @@
           warn('素材清单里缺：' + m.missing.join('、') + '（贴图缺失会回退占位图，音效缺失就只拍不响）')
         }
         preloadSounds()
+        syncSoundAsset()
         syncMenuInfo()
         log('素材就绪', m)
         return m
@@ -426,6 +735,11 @@
   // 从音效池里随机挑一个；池子多于一个时不连续用同一个（避免机械重复感）
   var lastPick = {}
   function pickBuffer(name) {
+    if (name === 'hit') {
+      var choice=activeStyle('soundHit')
+      if(choice.id==='custom' && customSoundBuffer)return customSoundBuffer
+      if(choice.url)return presetSoundId===choice.id ? presetSoundBuffer : null
+    }
     var pool = buffers[name]
     if (!pool || !pool.length) return null
     var idx = Math.floor(Math.random() * pool.length)
@@ -434,9 +748,48 @@
     return pool[idx] || null
   }
 
+  var rhythmBuffer = null, rhythmLoading = null, rhythmStep = 0, rhythmLast = null
+  var rhythmNotes = [0,2,4,7,4,0,2,0, 0,2,7,12,7,4,0,2, 0,7,2,0,2,4,12,0] // 低音不再低于原音，高音保持 +12 半音
+  var rhythmWeights = [1,.73,.88,.70,.96,.75,.85,.76]
+  function resetRhythm() { rhythmStep=0;rhythmLast=null }
+  function loadRhythmSound() {
+    if (rhythmBuffer) return Promise.resolve(rhythmBuffer)
+    if (rhythmLoading) return rhythmLoading
+    var ctx=audioCtx()
+    if (!ctx || !net) return Promise.resolve(null)
+    rhythmLoading=net(BASE+'/sound/rhythm-water.wav',{cache:'no-store'})
+      .then(function(r){if(!r.ok)throw new Error('律动音效尚未就绪');return r.arrayBuffer()})
+      .then(function(bytes){return decodeCustomSound(bytes)})
+      .then(function(decoded){rhythmBuffer=decoded;return decoded})
+      .catch(function(e){warn('律动音效加载失败，暂用原音效',e);return null})
+      .then(function(decoded){rhythmLoading=null;return decoded})
+    return rhythmLoading
+  }
+  function onRhythmChange() { resetRhythm();if(cfg.rhythmSound)loadRhythmSound() }
+
+  // 按实际播放窗口（含变调速率、淡入淡出）匹配固定音效的单次能量。
+  function rhythmLevel(buf, rate, tail) {
+    var reference=buffers.hit && buffers.hit[0]
+    if(!reference || !reference.getChannelData || !buf.getChannelData) return 1.6
+    function energy(b, speed, duration, envelope) {
+      var data=b.getChannelData(0), hz=b.sampleRate, count=Math.min(Math.floor(duration*hz),Math.ceil(data.length/speed))
+      var sum=0,peak=0
+      for(var i=0;i<count;i++) {
+        var sample=data[Math.min(data.length-1,Math.floor(i*speed))],time=i/hz
+        var fade=envelope ? Math.min(1,time/.0015,Math.max(0,(duration-time)/.025)) : 1
+        sum+=sample*sample*fade*fade;peak=Math.max(peak,Math.abs(sample))
+      }
+      return {value:Math.sqrt(sum/hz),peak:peak}
+    }
+    var fixed=energy(reference,1,reference.duration,false)
+    var played=energy(buf,rate,tail,true)
+    return Math.min(fixed.value/Math.max(played.value*.83,1e-8), .92/Math.max(played.peak,1e-8))
+  }
   function play(name) {
     if (!cfg.sound) return
-    var buf = pickBuffer(name)
+    var rhythmic = name === 'hit' && cfg.rhythmSound && rhythmBuffer
+    if (cfg.rhythmSound && !rhythmBuffer) loadRhythmSound()
+    var buf = rhythmic ? rhythmBuffer : pickBuffer(name)
     if (!buf) return
     var ctx = audioCtx()
     if (!ctx) return
@@ -447,14 +800,29 @@
     try {
       var src = ctx.createBufferSource()
       src.buffer = buf
-      if (cfg.pitchJitter > 0) {
+      var weight=1, tail=0
+      if (rhythmic) {
+        var gap=rhythmLast===null ? Infinity : t-rhythmLast
+        if (gap>1000 || gap<0) rhythmStep=0
+        src.playbackRate.value=Math.pow(2,rhythmNotes[rhythmStep % rhythmNotes.length]/12)
+        weight=rhythmWeights[rhythmStep % rhythmWeights.length]
+        tail=gap<150 ? .115 : .14
+        rhythmStep=(rhythmStep+1)%rhythmNotes.length;rhythmLast=t
+      } else if (cfg.pitchJitter > 0) {
         src.playbackRate.value = 1 + (Math.random() * 2 - 1) * (cfg.pitchJitter / 100)
       }
       var gain = ctx.createGain()
-      gain.gain.value = clamp(cfg.volume / 100, 0, 1)
+      gain.gain.value = clamp(cfg.volume / 100, 0, 1)*weight*(rhythmic ? rhythmLevel(buf,src.playbackRate.value,tail) : 1) // 律动与固定音效匹配单次能量，保留轻重
       src.connect(gain)
       gain.connect(ctx.destination)
-      src.start()
+      if (rhythmic && gain.gain.setValueAtTime && gain.gain.linearRampToValueAtTime) {
+        var at=ctx.currentTime, level=gain.gain.value
+        gain.gain.setValueAtTime(0,at)
+        gain.gain.linearRampToValueAtTime(level,at+.0015)
+        gain.gain.setValueAtTime(level,at+tail-.025)
+        gain.gain.linearRampToValueAtTime(0,at+tail)
+        src.start();src.stop(at+tail+.003)
+      } else src.start()
     } catch (e) {}
   }
 
@@ -481,7 +849,7 @@
   // both=true → 两只手一起拍（同按两键 / 长按）
   function slap(source, both) {
     var t = nowMs()
-    if (t - lastSlap < cfg.minGapMs) return
+    if (source !== 'press' && t - lastSlap < cfg.minGapMs) return
     lastSlap = t
     slapCount += 1
     stamps.push(t)
@@ -498,7 +866,11 @@
       stage.classList.add(side === 'left' ? 'is-hit-left' : 'is-hit-right')
     }
 
-    if (cfg.clawMode !== 'toggle') {
+    ;(both ? ['left','right'] : [side]).forEach(function(s){
+      if(cfg.style === 'bounce') {var spring=springFor(s);spring.v+=180;spring.qv+=1.2}
+      animateHand(s, true)
+    })
+    if (source !== 'press' && cfg.clawMode !== 'toggle') {
       // 闪现：拍一下，holdMs 后两只手都回到举着（松开键不做任何事，全靠这个计时器）
       hitTimer = setTimeout(release, Math.max(30, cfg.holdMs))
     }
@@ -520,6 +892,12 @@
   function release() {
     clearTimeout(hitTimer)
     stage.classList.remove('is-hit-left', 'is-hit-right')
+    ;['left','right'].forEach(function(side){
+      var s=springFor(side);s.target=0;s.y=0;s.v=0;s.q=0;s.qv=0
+      root.querySelector('.dsbf-hand-'+side).querySelector('.dsbf-hand-motion').style.transform=''
+    })
+    if(springFrame) {if(win.cancelAnimationFrame)win.cancelAnimationFrame(springFrame);springFrame=0}
+
   }
 
   // ---------------------------------------------------------------- 键盘观察（页面级全局）
@@ -530,7 +908,7 @@
   //   · 声音与动画都只在"按下"时触发，松开不做任何反应
   //   · 输入法组合态（打拼音那几下）**也算按键** —— 用物理键 e.code 计数，
   //     所以中文输入照样一下一响；标点符号同理（e.code 是 Comma/Period/…）
-  //   · 按住不放（系统重复触发）→ 两只手一起拍
+  //   · 按住不放：忽略重复事件，保持当前手按下，不重复播放音效
   //   · 同时按住 2 个键 → 两只手一起拍；3 个及以上不再加戏（本来就是双手）
   //   · 页面只在自己有焦点时收得到按键；焦点在 iframe（文档预览/终端）里时收不到，
   //     跨应用（DSH 不在前台）更收不到 —— 那是宿主级键盘钩子的事，网页插件做不到
@@ -556,21 +934,56 @@
     var composing = e.isComposing === true || e.keyCode === 229 || e.key === 'Process'
     if (composing && !cfg.imeCounts) return
 
-    if (e.repeat) {                        // 长按：两只手一起按着
-      slap('hold', cfg.bothOnMulti && twoHands)
-      return
+    if (e.repeat || downKeys.has(keyId(e))) return
+    if (cfg.countModifiers === false && MODIFIER_KEYS[e.key] === 1) return
+    if (root.contains(e.target) || menuOpen) return
+    downKeys.add(keyId(e))
+    clearTimeout(releaseTimers[keyId(e)])
+    slap('press', false)
+    var assigned = lastSide
+    if (cfg.bothOnMulti && downKeys.size >= 2) {
+      var occupied = Object.keys(heldSides).map(function(k){return heldSides[k]})
+      if (occupied.indexOf('left') >= 0 && occupied.indexOf('right') < 0) assigned = 'right'
+      else if (occupied.indexOf('right') >= 0 && occupied.indexOf('left') < 0) assigned = 'left'
     }
-    if (!(cfg.countModifiers === false && MODIFIER_KEYS[e.key] === 1)) downKeys.add(keyId(e))
-    slap('press', cfg.bothOnMulti && twoHands && downKeys.size >= 2)
+    heldSides[keyId(e)] = assigned
+    pressedAt[keyId(e)] = nowMs()
+    renderHeld()
+  }
+  var heldSides = {}, pressedAt = {}, releaseTimers = {}
+  function renderHeld() {
+    stage.classList.remove('is-hit-left','is-hit-right')
+    var sides={}
+    Object.keys(heldSides).forEach(function(k){
+      var side=heldSides[k]
+      if(side==='both') {sides.left=true;sides.right=true} else sides[side]=true
+    })
+    ;['left','right'].forEach(function(side){
+      if(sides[side]) {stage.classList.add('is-hit-'+side);animateHand(side,true)}
+      else animateHand(side,false)
+    })
   }
   function onKeyUp(e) {
     if (!e.isTrusted) return
-    downKeys.delete(keyId(e))              // 只记账：松开不还原、不出声
+    var id=keyId(e)
+    downKeys.delete(id)
+    if(!heldSides[id]) return
+    var remaining=Math.max(0,80-(nowMs()-(pressedAt[id]||0)))
+    clearTimeout(releaseTimers[id])
+    releaseTimers[id]=setTimeout(function(){
+      if(downKeys.has(id))return
+      delete heldSides[id];delete pressedAt[id];delete releaseTimers[id];renderHeld()
+    },remaining)
   }
+  function clearHeld() {
+    downKeys.clear();heldSides={};pressedAt={}
+    Object.keys(releaseTimers).forEach(function(k){clearTimeout(releaseTimers[k])});releaseTimers={};release()
+  }
+
   document.addEventListener('keydown', onKeyDown, true)
   document.addEventListener('keyup', onKeyUp, true)
-  // 切窗口时把"按住"状态清空，避免回到页面时误判成还按着
-  window.addEventListener('blur', function () { downKeys.clear() })
+  window.addEventListener('blur', clearHeld)
+  document.addEventListener('visibilitychange',function(){if(document.visibilityState!=='visible')clearHeld()})
 
   // ---------------------------------------------------------------- 位置引擎
   var rafId = 0
@@ -598,7 +1011,7 @@
       var y
       var r0 = card.getBoundingClientRect()
       if (sp.ref === 'card' && sp.side) {
-        x = sp.side === 'left' ? r0.left - gap - m.hit.left : r0.right + gap - m.hit.right
+        x = sp.side === 'left' ? r0.left - gap - m.hit.right : r0.right + gap - m.hit.left
         y = typeof sp.y === 'number' ? sp.y : r0.bottom - gap - m.hit.bottom
       } else if (sp.ref === 'card' && sp.edge) {
         x = typeof sp.x === 'number' ? sp.x : r0.right - m.hit.right
@@ -822,7 +1235,8 @@
     input.checked = cfg[key] === value
     input.addEventListener('change', function () {
       if (!input.checked) return
-      cfg[key] = value
+      if(key==='style')switchHandStyle(value)
+      else cfg[key] = value
       saveCfg()
       lastKey = ''
       schedule()
@@ -866,7 +1280,8 @@
       cfg[key] = Number(input.value)
       out.textContent = text(cfg[key])
       saveCfg()
-      if (key === 'size') { applySize(); lastKey = ''; syncMenu() }
+      applySize()
+       if (key === 'size') { applySize(); lastKey = ''; syncMenu() }
       if (key === 'size' || key === 'gap' || key === 'anchorX' || key === 'anchorY') { lastKey = ''; schedule() }
       if (after) after()
     })
@@ -874,6 +1289,9 @@
     input.addEventListener('pointerdown', function (e) { e.stopPropagation() })
     wrap.appendChild(input)
     wrap.appendChild(out)
+    var reset=el('button','dsbf-reset','↺');reset.type='button';reset.title='恢复此项默认值'
+    reset.addEventListener('click',function(){cfg[key]=HAND_KEYS.indexOf(key)>=0?HAND_DEFAULTS[cfg.style][key]:DEFAULTS[key];input.value=String(cfg[key]);out.textContent=text(cfg[key]);saveCfg();applySize();lastKey='';schedule();if(after)after()})
+    wrap.appendChild(reset)
     ui['s-' + key] = { input: input, out: out, text: text }
     return wrap
   }
@@ -888,33 +1306,92 @@
 
   // 菜单只留这几项（按需求精简）：尺寸 / 位置 / 左右手 / 拍下时长 / 本体跳动 / 音量 / 待机摇摆
   // —— 每一项都是"改了立刻生效"，没有保存按钮。
+  var menuPages = [], pageButtons = [], menuPage = 0
+  function selectMenuPage(index) {
+    menuPage = (index + menuPages.length) % menuPages.length
+    menuPages.forEach(function(p,i){p.style.display=i===menuPage?'':'none'})
+    pageButtons.forEach(function(b,i){b.classList.toggle('active',i===menuPage);b.setAttribute('aria-pressed',String(i===menuPage))})
+    ui.pageCount.textContent=(menuPage+1)+' / '+menuPages.length
+    if(menuOpen) positionMenu()
+  }
   function buildMenu() {
-    menu.appendChild(row('尺寸', group([
+    var names=['布局','本体','手部','动作','声音与提醒','关于','自定义素材']
+    var tabs=el('div','dsbf-tabs')
+    names.forEach(function(name,i){
+      var button=el('button','dsbf-tab',name);button.type='button'
+      button.addEventListener('click',function(){selectMenuPage(i)})
+      tabs.appendChild(button);pageButtons.push(button)
+      menuPages.push(el('div','dsbf-page'))
+    })
+    menu.appendChild(tabs)
+    menuPages.forEach(function(p){menu.appendChild(p)})
+    buildAssetPage(menuPages[6])
+    var page=menuPages[0]
+
+    page.appendChild(row('整体大小', group([
       radio(96, '小', 'size', onSizeChange),
       radio(128, '中', 'size', onSizeChange),
       radio(176, '大', 'size', onSizeChange),
       radio(240, '特大', 'size', onSizeChange),
     ])))
-    menu.appendChild(row('位置', group([
+    page.appendChild(row('吸附方式', group([
       radio('top', '贴上沿', 'mode'),
       radio('bottom', '贴下沿', 'mode'),
       radio('snap', '自由磁吸', 'mode'),
     ])))
-    menu.appendChild(row('左右手', group([
+    page=menuPages[2]
+    page.appendChild(row('敲键样式', group([radio('normal','正常手','style',function(){clearHeld();applyParts()}),radio('bounce','萌圆手','style',function(){clearHeld();applyParts()})])))
+
+    page.appendChild(row('手部镜像', checkbox('右手水平翻转', 'mirrorHands')))
+    page.appendChild(row('出手顺序', group([
       radio('random', '随机', 'handMode'),
-      radio('noRepeat', '不连拍', 'handMode'),
       radio('alternate', '交替', 'handMode'),
     ])))
-    menu.appendChild(row('拍下时长', slider('holdMs', 60, 400, 20, function (v) { return v + 'ms' })))
-    menu.appendChild(row('本体跳动', checkbox('拍下时抖一下', 'bodyKick')))
-    menu.appendChild(row('提醒时拍手次数', slider('notifyCount', 0, 9, 1, function (v) {
+    ;[
+      ['bodyWidth',20,160,1,'本体缩放'],['bodyX',0,100,.1,'本体水平位置'],['bodyY',0,100,.1,'本体垂直位置'],
+      ['handWidth',5,60,.1,'手部大小'],['handRatio',20,160,1,'手部高宽比'],
+      ['handGap',0,100,.1,'两手间距'],['handAxis',0,100,.1,'双手中心水平位置'],['handY',0,120,.1,'手部垂直位置'],
+      ['downY',0,180,.1,'正常手下沉深度'],['downScale',50,150,1,'正常手按下缩放'],
+      ['bounceHeight',0,60,.5,'萌圆手下压深度'],['bounceDuration',80,600,10,'萌圆手时间倍率']
+    ].forEach(function(d){var target=d[0].indexOf('body')===0?menuPages[1]:(d[0].indexOf('bounce')===0 || d[0].indexOf('down')===0?menuPages[3]:menuPages[2]);target.appendChild(row(d[4],slider(d[0],d[1],d[2],d[3],function(v){return d[0]==='bounceDuration'?(v/260).toFixed(2)+'倍':v+'%'})))})
+    page=menuPages[3]
+    page.appendChild(row('提醒按压保持', slider('holdMs', 60, 400, 20, function (v) { return v + 'ms' })))
+    page.appendChild(row('敲击抖动', checkbox('整体抖动', 'bodyKick')))
+    page=menuPages[4]
+    page.appendChild(row('提醒时拍手次数', slider('notifyCount', 0, 9, 1, function (v) {
       return v === 0 ? '关' : v + ' 下'
     })))
-    menu.appendChild(row('音量', slider('volume', 0, 100, 5, function (v) { return v + '%' })))
-    menu.appendChild(row('待机摇摆', checkbox('轻轻晃', 'bob')))
-    menu.appendChild(el('div', 'dsbf-sep'))
+    page.appendChild(row('律动音效', checkbox('水滴高低律动', 'rhythmSound', onRhythmChange)))
+    page.appendChild(row('音量', slider('volume', 0, 100, 5, function (v) { return v + '%' })))
+    menuPages[3].appendChild(row('待机浮动', checkbox('整体上下浮动', 'bob')))
+    page=menuPages[5]
+    page.appendChild(el('div', 'dsbf-sep'))
     ui.info = el('div', 'dsbf-note')
-    menu.appendChild(ui.info)
+    page.appendChild(ui.info)
+    var resetAll=el('button','dsbf-btn2','恢复布局与效果默认值');resetAll.type='button'
+    resetAll.addEventListener('click',function(){Object.keys(DEFAULTS).forEach(function(k){cfg[k]=JSON.parse(JSON.stringify(DEFAULTS[k]))});cfg.handProfiles=newHandProfiles();cfg.handProfilesVersion=1;loadHandProfile(cfg,cfg.style);cfg.layoutVersion=2;clearHeld();saveCfg();applySize();lastKey='';schedule();syncMenu();loadManifest()})
+    page.appendChild(resetAll)
+    var notes=[
+      '整体大小会缩放本体和双手；吸附方式决定挂件相对输入框的位置。自由磁吸需拖动挂件确定落点。',
+      '这里只改变本体图片，不改变手部。位置以整个挂件画布为基准；本体缩放可能超出原画布。',
+      '手部大小同时缩放宽高；高宽比会拉伸图片。两手间距是两个手部中心的距离；中心水平位置会一起移动两只手，与镜像开关无关。多键同按优先使用空闲手。',
+      '正常手偏移按手部自身高度计算。弹跳深度也按手部高度计算；时间倍率越大动作越慢，并非固定完成时长。提醒保持仅作用于自动提醒，键盘长按由松开控制。',
+      '提醒拍手在需要回答、工具审批及本轮结束时触发。音量0%为静音。提醒次数不影响真实键盘反馈。',
+      '恢复按钮只重置布局、动作、声音等参数，保留自定义图片。图片请到自定义素材页逐项恢复。',
+      '上手用于正常手松开状态，下手用于按下状态；萌圆手使用独立素材。自定义图片仅保存在当前浏览器。'
+    ]
+    notes.forEach(function(text,i){menuPages[i].appendChild(el('div','dsbf-note',text))})
+    Object.keys(ui).filter(function(k){return k.indexOf('s-')===0}).forEach(function(k){
+      var control=ui[k];control.input.title=notes[k.indexOf('body')>=0?1:3]
+    })
+    syncModeControls()
+    var footer=el('div','dsbf-pagination')
+    var prev=el('button','dsbf-btn2','‹ 上一页'),next=el('button','dsbf-btn2','下一页 ›')
+    prev.type=next.type='button';ui.pageCount=el('span','dsbf-page-count')
+    prev.addEventListener('click',function(){selectMenuPage(menuPage-1)})
+    next.addEventListener('click',function(){selectMenuPage(menuPage+1)})
+    footer.appendChild(prev);footer.appendChild(ui.pageCount);footer.appendChild(next);menu.appendChild(footer)
+    selectMenuPage(0)
     syncMenuInfo()
     // 点面板空白处别把输入框焦点抢走；但**绝不能**对控件本身 preventDefault ——
     // 那会把 <input type="range"> 的原生拖动行为一起干掉（滑块就拖不动了）
@@ -925,6 +1402,17 @@
     })
   }
 
+  function syncModeControls() {
+    var bounce=cfg.style==='bounce'
+    ;['downY','downScale','bounceHeight','bounceDuration'].forEach(function(k){
+      var control=ui['s-'+k]
+      if(control && control.input.parentNode && control.input.parentNode.parentNode)
+        control.input.parentNode.parentNode.style.display=(k.indexOf('bounce')===0?bounce:!bounce)?'':'none'
+    })
+    var variant=ui['r-downVariant-default']
+    if(variant && variant.parentNode && variant.parentNode.parentNode && variant.parentNode.parentNode.parentNode)
+      variant.parentNode.parentNode.parentNode.style.display=bounce?'none':''
+  }
   function syncMenu() {
     ;['top', 'bottom', 'snap'].forEach(function (v) {
       if (ui['r-mode-' + v]) ui['r-mode-' + v].checked = cfg.mode === v
@@ -935,24 +1423,27 @@
     ;[96, 128, 176, 240].forEach(function (v) {
       if (ui['r-size-' + v]) ui['r-size-' + v].checked = cfg.size === v
     })
-    ;['bodyKick', 'bob'].forEach(function (k) {
+    ;['bodyKick', 'bob', 'mirrorHands', 'rhythmSound'].forEach(function (k) {
       if (ui['c-' + k]) ui['c-' + k].checked = !!cfg[k]
     })
-    ;['holdMs', 'notifyCount', 'volume'].forEach(function (k) {
+    Object.keys(ui).filter(function(k){return k.indexOf('r-')===0}).forEach(function(k){var r=ui[k];var key=r.name.slice(5);r.checked=String(cfg[key])===r.value})
+    Object.keys(ui).filter(function(k){return k.indexOf('s-')===0}).map(function(k){return k.slice(2)}).forEach(function (k) {
       var s = ui['s-' + k]
       if (!s) return
       s.input.value = String(cfg[k])
       s.out.textContent = s.text(cfg[k])
     })
+    syncModeControls()
     syncMenuInfo()
   }
   // 说明区只留三样：按键数统计 / 音效路径 / 版本
   function syncMenuInfo() {
     if (!ui.info) return
+    while (stamps.length && nowMs() - stamps[0] > 60000) stamps.shift()
     ui.info.innerHTML =
-      '按键：<b>' + slapCount + '</b> 下 · 最近一分钟 <b>' + stamps.length + '</b> 下<br>' +
+      '反馈动作：<b>' + slapCount + '</b> 次 · 最近一分钟 <b>' + stamps.length + '</b> 下<br>' +
       '音效：' + escapeHtml(soundSource) + (soundCount > 1 ? '（' + soundCount + ' 个变体）' : '') + '<br>' +
-      '版本 v' + VERSION
+      '素材方式：' + escapeHtml(artModeLabel) + '<br>长按保持按下，松开恢复；音效仅按下响一次。<br>版本 v' + VERSION
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"]/g, function (c) {
@@ -963,9 +1454,13 @@
   var menuOpen = false
   function openMenu() {
     if (menuOpen) return
+    clearHeld()
     menuOpen = true
     menu.classList.add('open')
     syncMenu()
+    positionMenu()
+  }
+  function positionMenu() {
     // 面板贴着挂件盒子放：优先右侧，放不下就翻到左侧；上下按视口边界收
     raf(function () {
       var m = artMetrics()
@@ -976,6 +1471,7 @@
       // 面板贴着"看得见的主体"放：优先右侧，放不下翻到左侧；上下按视口边界收
       // （left/top 是相对 root 盒子内部的坐标，所以判定用视口坐标、写值用盒子坐标）
       var left = (curX + m.hit.right + 6 + mw <= vw) ? (m.hit.right + 6) : (m.hit.left - mw - 6)
+       left = clamp(left, 4-curX, vw-4-curX-mw)
       var top = m.hit.bottom - mh
       if (curY + top < 4) top = 0
       if (curY + top + mh > vh - 4) top = vh - 4 - curY - mh
@@ -1029,7 +1525,7 @@
     if (n <= 0) return false
     for (var i = 0; i < n; i++) {
       ;(function (k) {
-        setTimeout(function () { slap('notify', false) }, k * 140)
+        setTimeout(function () { if (!downKeys.size) slap('notify', false) }, k * (Math.max(80, cfg.holdMs) + 90))
       })(i)
     }
     log('通知时刻 → 拍 ' + n + ' 下', item.kind)
@@ -1098,19 +1594,23 @@
     },
     // 手动模拟一次通知时刻（调试/试玩用）：notify('question' | 'approval' | 'end')
     notify: function (kind) {
-      return deliverNotify({ rev: ++notifyRev, kind: kind || 'end', at: Date.now() })
+      return deliverNotify({ rev: notifyRev + 1, kind: kind || 'end', at: Date.now() })
     },
     deliverNotify: deliverNotify,
     notifyState: function () { return { rev: notifyRev, polling: !!notifyTimer, streaming: !!notifySource } },
     openMenu: openMenu,
     closeMenu: closeMenu,
     reloadManifest: loadManifest,
+    applyLayout: function(){clearHeld();applySize();saveCfg();lastKey='';schedule();syncMenu()},
   }
 
   // ---------------------------------------------------------------- 启动
   mount()
   schedule()
   loadManifest()
+  loadCustomArt()
+  loadCustomSound()
+  if (cfg.rhythmSound) loadRhythmSound()
   connectNotify()
   // 这一行不挑调试开关：第一次装完就该能在控制台确认"挂件活着"
   try {
@@ -1118,6 +1618,10 @@
       'color:#4a90d9;font-weight:bold', 'color:inherit')
   } catch (e) {}
 })()
+
+
+
+
 
 
 

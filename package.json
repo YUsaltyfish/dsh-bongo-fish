@@ -1,6 +1,10 @@
 {
   "name": "dsh-bongo-fish",
-  "version": "0.3.0",
+  "version": "0.4.1",
+  "scripts": {
+    "test": "node tools/self-check.mjs && node tools/widget-sim-check.mjs",
+    "check": "node --check index.js && node --check assets/widget.js"
+  },
   "description": "A BangoCat-style typing feedback widget that automatically snaps to the DSH composer and window edges, with customizable character art and sound effects.",
   "keywords": [
     "dsh",
@@ -16,6 +20,12 @@
     "sound"
   ],
   "author": "YUsaltyfish",
+  "contributors": [
+    {
+      "name": "MeteorNOX",
+      "url": "https://github.com/MeteorNOX"
+    }
+  ],
   "license": "MIT",
   "type": "module",
   "icon": "icon.png",
@@ -58,6 +68,8 @@
     }
   }
 }
+
+
 
 
 

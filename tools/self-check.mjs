@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // 宿主半自检：用假的 Cordis 上下文 + 假的 http 请求跑一遍真实路由。
 // 用法：node tools/self-check.mjs
 // ============================================================================
@@ -182,12 +182,16 @@ ok(
 const rMan = await call(find('exact', BASE + '/manifest.json'), BASE + '/manifest.json')
 const man = JSON.parse(rMan.body.toString('utf8'))
 ok('manifest ok=true', man.ok === true)
-ok('识别为双手五图层模式（本体 + 左右手各两张）', man.artMode === 'hands', man.artMode)
+const rhythmRes=await call(find('exact',BASE+'/rhythm-water.mp3'),BASE+'/rhythm-water.mp3')
+ok('rhythm has a dedicated bundled audio route',rhythmRes.statusCode===200 && rhythmRes.headers['Content-Type']==='audio/mpeg' && rhythmRes.body.length>0)
+ok('rhythm water asset is not added to the normal sound pool',!man.sounds.hit.some(u=>u.includes('rhythm-water') || u.includes('%E6%B0%B4')))
+
+ok('0.4.1 独立部件模式', man.version === '0.4.1' && man.artMode === 'components', man.artMode)
 ok('manifest 指向占位本体', typeof man.art.body === 'string' && man.art.body.startsWith(BASE + '/art/body.'), String(man.art.body))
 ok(
-  'manifest 指向四张手部图层',
-  ['clawLeftUp', 'clawLeftDown', 'clawRightUp', 'clawRightDown'].every((k) => typeof man.art[k] === 'string' && man.art[k].startsWith(BASE + '/art/')),
-  [man.art.clawLeftUp, man.art.clawLeftDown, man.art.clawRightUp, man.art.clawRightDown].join(' | '),
+  'manifest 指向可左右复用的上手/下手/弹跳手及可选变体',
+  ['handUp', 'handDown', 'handBounce', 'handDownAlt'].every((k) => typeof man.art[k] === 'string' && man.art[k].startsWith(BASE + '/art/')),
+  JSON.stringify(man.art),
 )
 ok('manifest 无缺件', man.missing.length === 0, JSON.stringify(man.missing))
 ok(
@@ -202,8 +206,12 @@ ok(
   rArt.statusCode === 200 && rArt.headers['Content-Type'] === 'image/png' && rArt.body.length > 500,
   rArt.body ? rArt.body.length + ' bytes' : 'empty',
 )
-const rClaw = await call(find('prefix', BASE + '/art'), BASE + '/art/claw-right-down.png')
-ok('右手拍下图也能取到', rClaw.statusCode === 200 && rClaw.body.length > 500)
+for (const name of ['hand-up', 'hand-down', 'hand-bounce', 'hand-down-alt']) {
+  const result = await call(find('prefix', BASE + '/art'), BASE + '/art/' + name + '.png')
+  ok(name + ' 部件路由返回 PNG', result.statusCode === 200 && result.headers['Content-Type'] === 'image/png' && result.body.length > 500)
+}
+const legacyArt = await call(find('prefix', BASE + '/art'), BASE + '/art/claw-right-down.png')
+ok('旧左右定位图已退出组件白名单', legacyArt.statusCode === 404)
 const rArtBad = await call(find('prefix', BASE + '/art'), BASE + '/art/..%2f..%2findex.js')
 ok('目录穿越被 400 拦下', rArtBad.statusCode === 400, 'status=' + rArtBad.statusCode)
 const rArt404 = await call(find('prefix', BASE + '/art'), BASE + '/art/nope.png')
@@ -226,8 +234,8 @@ const h2 = makeHarness()
 plugin.apply(h2.root, {})
 const man2 = JSON.parse((await call(h2.routes.find((r) => r.path === BASE + '/manifest.json'), BASE + '/manifest.json')).body.toString('utf8'))
 ok('用户目录的本体图优先于包内', String(man2.art.body).includes('/art/body.svg'), String(man2.art.body))
-ok('用户目录里缺的手部图层仍用包内兜底', String(man2.art.clawLeftDown).includes('claw-left-down.png'), String(man2.art.clawLeftDown))
-ok('五件齐全时仍是双手模式', man2.artMode === 'hands', man2.artMode)
+ok('用户目录里缺的手部组件仍用包内兜底', String(man2.art.handDown).includes('hand-down.png'), String(man2.art.handDown))
+ok('四件必需组件齐全时仍是组件模式', man2.artMode === 'components', man2.artMode)
 fs.rmSync(tmp, { recursive: true, force: true })
 
 // ④b 音效变体池：用户目录放 hit-1 / hit-2，应和包内 hit 组成 3 个变体
@@ -308,7 +316,26 @@ try {
 }
 ok('widget.js 语法通过', compileErr === null, compileErr ? compileErr.message : '')
 
-// ⑦ 卸装清理
+// ⑦ Catalog contract isolated from packaged assets: optional alt must not affect mode.
+// Evaluate only the real catalog helper with a deterministic filesystem stub.
+const hostSource = fs.readFileSync(path.join(PKG, 'index.js'), 'utf8')
+const catalogStart = hostSource.indexOf('function buildCatalog(dirs)')
+const catalogEnd = hostSource.indexOf('/** 按 mtime', catalogStart)
+const presentComponents = new Set(['body', 'hand-up', 'hand-down', 'hand-bounce'])
+const catalogContext = vm.createContext({
+  BASE, ART_REQUIRED: ['body', 'hand-up', 'hand-down', 'hand-bounce'],
+  ART_ALL: ['body', 'hand-up', 'hand-down', 'hand-bounce', 'hand-down-alt'], ART_EXT: ['png'], SOUND_EXT: ['wav'],
+  keyOf: name => name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()),
+  findAsset: (dirs, name) => presentComponents.has(name) ? { ext: 'png', mtimeMs: 1, dir: 'fixture' } : null,
+  listSoundPool: () => [{ name: 'hit', ext: 'wav', mtimeMs: 1, dir: 'fixture' }],
+})
+vm.runInContext(hostSource.slice(catalogStart, catalogEnd) + '\nthis.catalog = buildCatalog({artDirs:[],soundDirs:[]})', catalogContext)
+ok('可选 hand-down-alt 缺失仍为 components 且无 missing', catalogContext.catalog.artMode === 'components' && catalogContext.catalog.art.handDownAlt === null && catalogContext.catalog.missing.length === 0)
+presentComponents.delete('hand-bounce')
+vm.runInContext('this.catalog = buildCatalog({artDirs:[],soundDirs:[]})', catalogContext)
+ok('必需弹跳手缺失进入 fallback 并报告明确文件', catalogContext.catalog.artMode === 'fallback' && catalogContext.catalog.missing.includes('art/hand-bounce.png'))
+
+// ⑧ 卸装清理
 h.disposers.forEach((fn) => { try { fn() } catch (e) {} })
 ok('disposer 跑通不抛错', true)
 ok('卸装后监听已注销', h.listeners.filter((l) => l.name === 'user-questions/request').length === 0)
@@ -316,5 +343,11 @@ fs.rmSync(FIX1, { recursive: true, force: true })
 
 console.log(failed === 0 ? '\n宿主半自检：全部通过 ✅' : '\n宿主半自检：' + failed + ' 项失败 ❌')
 process.exit(failed === 0 ? 0 : 1)
+
+
+
+
+
+
 
 

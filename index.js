@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // dsh-bongo-fish · 宿主半（Host half）
 // ----------------------------------------------------------------------------
 // 职责只有四件：
@@ -17,7 +17,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const PKG_ROOT = path.dirname(fileURLToPath(import.meta.url))
-const VERSION = '0.3.0'
+const VERSION = '0.4.1'
 const BASE = '/dsh-bongo-fish'
 const WIDGET_PATH = BASE + '/widget.js'
 
@@ -34,20 +34,17 @@ const NOTIFY_LIMIT = 50        // 事件环形缓冲上限（浏览器半首次�
 
 const ART_EXT = ['png', 'gif', 'webp', 'jpg', 'jpeg', 'svg']
 const SOUND_EXT = ['wav', 'mp3', 'ogg', 'm4a', 'aac', 'flac']
-// 双手模型（推荐）：本体一张 + 左手两张 + 右手两张；每次敲键随机一只手下拍
-const ART_HANDS = ['body', 'claw-left-up', 'claw-left-down', 'claw-right-up', 'claw-right-down']
-// 单手模型：本体一张 + 单只爪子两张
-const ART_LAYERS = ['body', 'claw-up', 'claw-down']
-// 两张整图（兼容老素材）：rest / hit 各含本体
-const ART_SWAP = ['rest', 'hit']
-const ART_ALL = ART_HANDS.concat(ART_LAYERS, ART_SWAP)
+// 组件模型：本体 + 上手 / 下手 / 弹跳手；下样式2是可选变体。
+// 清单与素材路由共用固定白名单；旧左右手定位图保留在磁盘但不再使用。
+const ART_REQUIRED = ['body', 'hand-up', 'hand-down', 'hand-bounce']
+const ART_ALL = ART_REQUIRED.concat('hand-down-alt')
 const MIME = {
   png: 'image/png', gif: 'image/gif', webp: 'image/webp',
   jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml',
   wav: 'audio/wav', mp3: 'audio/mpeg', ogg: 'audio/ogg',
   m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac',
 }
-// claw-up → clawUp（给 JSON 用的小驼峰）
+// hand-up → handUp（给 JSON 用的小驼峰）
 function keyOf(name) {
   return name.replace(/-([a-z])/g, (m, c) => c.toUpperCase())
 }
@@ -149,14 +146,11 @@ function buildCatalog(dirs) {
     sources['sound:hit:count'] = pool.length
   }
   const hasAll = (list) => list.every((n) => art[keyOf(n)])
-  const artMode = hasAll(ART_HANDS) ? 'hands'
-    : hasAll(ART_LAYERS) ? 'layers'
-      : hasAll(ART_SWAP) ? 'swap'
-        : 'fallback'
+  const artMode = hasAll(ART_REQUIRED) ? 'components' : 'fallback'
   const missing = []
   if (artMode === 'fallback') {
-    // 缺件就按推荐出图方式（双手五张）报缺
-    for (const n of ART_HANDS) if (!art[keyOf(n)]) missing.push('art/' + n + '.png')
+    // 只报告组件必需项；hand-down-alt 缺失不影响组件模式。
+    for (const n of ART_REQUIRED) if (!art[keyOf(n)]) missing.push('art/' + n + '.png')
   }
   if (!sounds.hit.length) missing.push('sounds/hit.wav（可以多放几个变体：hit-1.wav / hit-2.wav …）')
   return { art, sounds, sources, missing, artMode }
@@ -399,6 +393,11 @@ export default {
         }
         const base = name.replace(/\.[^.]+$/, '')
         const ext = name.slice(base.length + 1).toLowerCase()
+        if (kind === 'art' && !ART_ALL.includes(base)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+          res.end('unknown art component')
+          return
+        }
         const dirsList = kind === 'art' ? dirs.artDirs : dirs.soundDirs
         const found = findAsset(dirsList, base, [ext])
         if (!found) {
@@ -424,6 +423,14 @@ export default {
       // `pathname === prefix || pathname.startsWith(prefix + '/')`，自己会补那个斜杠。
       register({ kind: 'prefix', path: BASE + '/art', handler: serveAsset('art', ART_EXT) })
       register({ kind: 'prefix', path: BASE + '/sound', handler: serveAsset('sound', SOUND_EXT) })
+      // 独立命名资源，不加入 hit 音效池；只在用户开启律动时使用。
+      register({ kind: 'exact', path: BASE + '/rhythm-water.mp3', handler: (req, res) => {
+        try {
+          const bytes = fs.readFileSync(path.join(PKG_ROOT, 'assets', 'sounds', '水滴声.mp3'))
+          res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store', 'Content-Length': String(bytes.length) })
+          res.end(bytes)
+        } catch (err) { res.writeHead(404); res.end('rhythm sound not found') }
+      } })
 
       // —— Web 端注入（桌面端走 ①）——
       disposers.push(ctx.webServer.tapIndex((html) => {
@@ -440,6 +447,10 @@ export default {
     })
   },
 }
+
+
+
+
 
 
 
