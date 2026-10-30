@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // 宿主半自检：用假的 Cordis 上下文 + 假的 http 请求跑一遍真实路由。
 // 用法：node tools/self-check.mjs
 // ============================================================================
@@ -186,11 +186,11 @@ const rhythmRes=await call(find('exact',BASE+'/rhythm-water.mp3'),BASE+'/rhythm-
 ok('rhythm has a dedicated bundled audio route',rhythmRes.statusCode===200 && rhythmRes.headers['Content-Type']==='audio/mpeg' && rhythmRes.body.length>0)
 ok('rhythm water asset is not added to the normal sound pool',!man.sounds.hit.some(u=>u.includes('rhythm-water') || u.includes('%E6%B0%B4')))
 
-ok('0.4.1 独立部件模式', man.version === '0.4.1' && man.artMode === 'components', man.artMode)
+ok('0.4.3 独立部件模式', man.version === '0.4.3' && man.artMode === 'components', man.artMode)
 ok('manifest 指向占位本体', typeof man.art.body === 'string' && man.art.body.startsWith(BASE + '/art/body.'), String(man.art.body))
 ok(
   'manifest 指向可左右复用的上手/下手/弹跳手及可选变体',
-  ['handUp', 'handDown', 'handBounce', 'handDownAlt'].every((k) => typeof man.art[k] === 'string' && man.art[k].startsWith(BASE + '/art/')),
+  ['handUp', 'handDown', 'handBounce', 'handDown2'].every((k) => typeof man.art[k] === 'string' && man.art[k].startsWith(BASE + '/art/')),
   JSON.stringify(man.art),
 )
 ok('manifest 无缺件', man.missing.length === 0, JSON.stringify(man.missing))
@@ -206,7 +206,7 @@ ok(
   rArt.statusCode === 200 && rArt.headers['Content-Type'] === 'image/png' && rArt.body.length > 500,
   rArt.body ? rArt.body.length + ' bytes' : 'empty',
 )
-for (const name of ['hand-up', 'hand-down', 'hand-bounce', 'hand-down-alt']) {
+for (const name of ['hand-up', 'hand-down', 'hand-bounce', 'hand-down2']) {
   const result = await call(find('prefix', BASE + '/art'), BASE + '/art/' + name + '.png')
   ok(name + ' 部件路由返回 PNG', result.statusCode === 200 && result.headers['Content-Type'] === 'image/png' && result.body.length > 500)
 }
@@ -324,13 +324,13 @@ const catalogEnd = hostSource.indexOf('/** 按 mtime', catalogStart)
 const presentComponents = new Set(['body', 'hand-up', 'hand-down', 'hand-bounce'])
 const catalogContext = vm.createContext({
   BASE, ART_REQUIRED: ['body', 'hand-up', 'hand-down', 'hand-bounce'],
-  ART_ALL: ['body', 'hand-up', 'hand-down', 'hand-bounce', 'hand-down-alt'], ART_EXT: ['png'], SOUND_EXT: ['wav'],
+  ART_ALL: ['body', 'hand-up', 'hand-down', 'hand-bounce', 'hand-down2'], ART_EXT: ['png'], SOUND_EXT: ['wav'],
   keyOf: name => name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()),
   findAsset: (dirs, name) => presentComponents.has(name) ? { ext: 'png', mtimeMs: 1, dir: 'fixture' } : null,
   listSoundPool: () => [{ name: 'hit', ext: 'wav', mtimeMs: 1, dir: 'fixture' }],
 })
 vm.runInContext(hostSource.slice(catalogStart, catalogEnd) + '\nthis.catalog = buildCatalog({artDirs:[],soundDirs:[]})', catalogContext)
-ok('可选 hand-down-alt 缺失仍为 components 且无 missing', catalogContext.catalog.artMode === 'components' && catalogContext.catalog.art.handDownAlt === null && catalogContext.catalog.missing.length === 0)
+ok('可选 hand-down2 缺失仍为 components 且无 missing', catalogContext.catalog.artMode === 'components' && catalogContext.catalog.art.handDown2 === null && catalogContext.catalog.missing.length === 0)
 presentComponents.delete('hand-bounce')
 vm.runInContext('this.catalog = buildCatalog({artDirs:[],soundDirs:[]})', catalogContext)
 ok('必需弹跳手缺失进入 fallback 并报告明确文件', catalogContext.catalog.artMode === 'fallback' && catalogContext.catalog.missing.includes('art/hand-bounce.png'))

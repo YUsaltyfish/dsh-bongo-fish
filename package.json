@@ -1,6 +1,6 @@
 {
   "name": "dsh-bongo-fish",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "scripts": {
     "test": "node tools/self-check.mjs && node tools/widget-sim-check.mjs",
     "check": "node --check index.js && node --check assets/widget.js"

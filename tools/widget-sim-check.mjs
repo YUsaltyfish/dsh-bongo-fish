@@ -1,4 +1,4 @@
-﻿// Node VM + minimal DOM simulation. This is NOT a real-browser rendering test.
+// Node VM + minimal DOM simulation. This is NOT a real-browser rendering test.
 // Run: node tools/widget-sim-check.mjs
 import fs from 'node:fs'
 import path from 'node:path'
@@ -63,8 +63,8 @@ class El {
 }
 const STORE = 'dsh-bongo-fish:v1'
 const manifest = {
-  ok: true, version: '0.4.1', artMode: 'components',
-  art: Object.fromEntries(['body','handUp','handDown','handDownAlt','handBounce'].map(k => [k, '/dsh-bongo-fish/art/' + k + '.png?v=1'])),
+  ok: true, version: '0.4.3', artMode: 'components',
+  art: Object.fromEntries(['body','handUp','handDown','handDown2','handBounce'].map(k => [k, '/dsh-bongo-fish/art/' + k + '.png?v=1'])),
   sounds: { hit: ['/sound/hit.wav', '/sound/hit-1.wav', '/sound/hit-2.wav'] }, missing: [],
   dirs: { builtinArtDir: 'fixture/art', builtinSoundDir: 'fixture/sounds', sources: { 'art:body': 'fixture/art', 'sound:hit': 'fixture/sounds' } },
 }
@@ -144,7 +144,7 @@ function boot(saved = {}, options = {}) {
 }
 async function settle() { for (let i = 0; i < 20; i++) await Promise.resolve() }
 const h = boot(); const { api, root } = h
-ok('0.4.1 public API mounted', api?.version === '0.4.1')
+ok('0.4.3 public API mounted', api?.version === '0.4.3')
 ok('fallback exists before manifest resolves', root.querySelector('.dsbf-body').src.startsWith('data:image/svg+xml'))
 await settle(); h.flushRaf()
 ok('component manifest body loaded', root.querySelector('.dsbf-body').src === manifest.art.body)
@@ -157,13 +157,15 @@ ok('right-hand mirror CSS is separate from animated transform', /\.dsbf-hand-rig
 ok('bounce CSS hides normal hands and enables bounce layers', css.includes('.dsbf-art.is-bounce .dsbf-bounce{display:block}') && css.includes('.dsbf-claw-right-down{display:none}'))
 ok('component layout migration removes old crop', api.config.layoutVersion === 2 && api.config.anchorY === 100 && api.config.hitLeft === 0 && api.config.hitBottom === 100)
 const body = root.querySelector('.dsbf-body'); body.naturalWidth = 400; body.naturalHeight = 400; body.dispatch('load'); h.flushRaf()
-ok('component box and top alignment', root.style.width === '176px' && root.style.transform === 'translate3d(924px,524px,0)', root.style.transform)
+ok('component box and top alignment', root.style.width === '128px' && root.style.transform === 'translate3d(1444.3px,572px,0)', root.style.transform)
 const menu = root.querySelector('.dsbf-menu')
 const input = (key, value) => menu.querySelectorAll('input').find(n => n.name === 'dsbf-' + key && (value === undefined || n.value === String(value)))
 const choose = (key, value) => { const n = input(key,value); n.checked = true; n.dispatch('change'); h.flushRaf() }
 const slide = (key, value) => { const n = input(key); n.value = String(value); n.dispatch('input'); h.flushRaf(); return n }
-ok('normal screenshot defaults loaded',[api.config.handWidth,api.config.handRatio,api.config.handGap,api.config.handAxis,api.config.handY].join(',')==='25,76,53.3,41.6,82.2')
+ok('normal screenshot defaults loaded',[api.config.handWidth,api.config.handRatio,api.config.handGap,api.config.handAxis,api.config.handY].join(',')==='39.2,76,56.8,35.2,89.3')
 choose('style','bounce')
+ok('mirror switch removed',!input('mirrorHands'))
+ok('right hand orientation fixed',root.querySelector('.dsbf-hand-right').querySelector('.dsbf-hand-motion').style.scale==='1 1')
 ok('round screenshot defaults loaded',[api.config.handWidth,api.config.handRatio,api.config.handGap,api.config.handAxis,api.config.handY].join(',')==='18.6,73,44.6,39.9,90.7')
 slide('handWidth',21);slide('handGap',47);choose('handMode','alternate')
 choose('style','normal');slide('handWidth',29);slide('handGap',56);slide('downY',90)
@@ -174,9 +176,9 @@ ok('normal edits restored when switching back',api.config.handWidth===29 && api.
 const profilesReload=boot(JSON.parse(h.store.get(STORE)));await settle()
 ok('both independent profiles persist across reload',profilesReload.api.config.handProfiles.bounce.handWidth===21 && profilesReload.api.config.handProfiles.normal.handWidth===29)
 input('handWidth').parentNode.querySelector('.dsbf-reset').dispatch('click')
-ok('single reset uses normal mode default',api.config.handWidth===25 && api.config.handProfiles.bounce.handWidth===21)
+ok('single reset uses normal mode default',api.config.handWidth===39.2 && api.config.handProfiles.bounce.handWidth===21)
 choose('style','bounce');input('handWidth').parentNode.querySelector('.dsbf-reset').dispatch('click')
-ok('single reset uses round mode default',api.config.handWidth===18.6 && api.config.handProfiles.normal.handWidth===25)
+ok('single reset uses round mode default',api.config.handWidth===18.6 && api.config.handProfiles.normal.handWidth===39.2)
 choose('style','normal')
 const parts = ['bodyWidth','bodyX','bodyY','handWidth','handRatio','handGap','handAxis','handY','downY','downScale','bounceHeight','bounceDuration']
 ok('new component and spring sliders all exist', parts.every(k => input(k)?.type === 'range'))
@@ -236,7 +238,7 @@ for (const mode of ['normal','bounce']) {
   ok(mode + ': bothOnMulti holds both even when random chooses same side', h.hits().length === 2)
   h.win.dispatch('blur')
 }
-ok('audio volume default 60%', h.gains[0]?.gain.value === .6)
+ok('audio volume matches local default 40%', h.gains[0]?.gain.value === .4)
 const ids = h.started.map(s => s.buffer.id)
 ok('sound pool never repeats adjacent buffer', ids.length > 3 && ids.every((id,i) => i===0 || id!==ids[i-1]))
 let before = slaps
@@ -280,8 +282,8 @@ ok('actual polling fetch delivers a fresh event',slaps===before+3 && h.requests.
 ok('polling state exposed',api.notifyState().polling && !api.notifyState().streaming)
 // Position and hide/show regressions retained with new full component bounds.
 h.card.rect.top=652; h.card.rect.height=168; h.ros.forEach(cb=>cb([]))
-ok('ResizeObserver follows composer growth',root.style.transform==='translate3d(924px,476px,0)',root.style.transform)
-choose('mode','bottom'); ok('bottom edge aligns full component box',root.style.transform==='translate3d(924px,644px,0)',root.style.transform)
+ok('ResizeObserver follows composer growth',root.style.transform==='translate3d(1444.3px,524px,0)',root.style.transform)
+choose('mode','bottom'); ok('bottom edge aligns full component box',root.style.transform==='translate3d(972px,692px,0)',root.style.transform)
 choose('mode','top'); choose('size',96); ok('size preset repositions immediately',root.style.width==='96px' && root.style.transform==='translate3d(1004px,556px,0)')
 choose('size',176)
 const hitbox=root.querySelector('.dsbf-hitbox')
@@ -291,7 +293,7 @@ const position=root.style.transform
 h.seat.children=[]; h.card.isConnected=false; h.win.dispatch('resize'); h.flushRaf(); ok('missing composer hides widget',root.style.display==='none')
 h.seat.appendChild(h.card);h.card.isConnected=true;h.win.dispatch('resize');h.flushRaf();ok('same-position composer return restores widget',root.style.display==='' && root.style.transform===position)
 const reset=menu.querySelectorAll('button').find(n=>n.textContent==='恢复布局与效果默认值');reset.dispatch('click');await settle();h.flushRaf()
-ok('reset all restores defaults and saves',api.config.style==='normal' && api.config.handWidth===25 && api.config.volume===60 && JSON.parse(h.store.get(STORE)).layoutVersion===2)
+ok('reset all restores defaults and saves',api.config.style==='normal' && api.config.handWidth===39.2 && api.config.volume===40 && JSON.parse(h.store.get(STORE)).layoutVersion===2)
 off(); before=slaps; h.advance(100);api.slap('manual',false);ok('onSlap disposer unsubscribes',slaps===before)
 // Custom sound UI: persisted local bytes, reload, playback and reset.
 const records=new Map(); const soundHost=boot({}, {assetRecords:records}); await settle()
@@ -302,7 +304,7 @@ soundInput.dispatch('change'); await settle(); await settle()
 ok('selected audio persists in IndexedDB',records.get('soundHit')?.name==='custom.wav')
 soundHost.advance(100);soundHost.api.slap('manual',false)
 ok('typing playback uses imported audio',soundHost.started.at(-1)?.buffer?.id===321)
-const soundReload=boot({}, {assetRecords:records});await settle();await settle()
+const soundReload=boot(JSON.parse(soundHost.store.get(STORE)), {assetRecords:records});await settle();await settle()
 soundReload.advance(100);soundReload.api.slap('manual',false)
 ok('custom sound survives browser reload',soundReload.started.at(-1)?.buffer?.id===321)
 soundInput.files=[{name:'large.wav',size:11*1024*1024}];soundInput.dispatch('change');await settle()
@@ -316,7 +318,7 @@ ok('reset returns to bundled sound pool',soundHost.started.at(-1)?.buffer?.id!==
 const assetArrow=(host,key,dir)=>host.root.querySelectorAll('button').find(n=>n.name==='dsbf-style-'+dir+'-'+key)
 ok('every asset has previous and next arrows',['body','handUp','handDown','handBounce','soundHit'].every(k=>assetArrow(h,k,'prev') && assetArrow(h,k,'next')))
 assetArrow(h,'handDown','next').dispatch('click');await settle()
-ok('down hand cycles to bundled alternate immediately',root.querySelector('.dsbf-claw-left-down').src===manifest.art.handDownAlt)
+ok('down hand cycles to bundled alternate immediately',root.querySelector('.dsbf-claw-left-down').src===manifest.art.handDown2)
 ok('builtin art choice is persisted',JSON.parse(h.store.get(STORE)).assetStyle_handDown==='alternate')
 assetArrow(h,'handDown','next').dispatch('click');await settle()
 ok('down hand wraps to default',root.querySelector('.dsbf-claw-left-down').src===manifest.art.handDown)
@@ -339,7 +341,7 @@ const rhythmicSources=soundHost.started.slice(rhythmStart)
 const expectedNotes=[0,2,4,7,4,0,2,0]
 ok('rhythmic pitch follows approved phrase, not random jitter',rhythmicSources.length===8 && rhythmicSources.every((s,i)=>Math.abs(s.playbackRate.value-Math.pow(2,expectedNotes[i]/12))<1e-9))
 ok('fast rhythm has short fading tails',rhythmicSources.slice(1).every(s=>Math.abs(s.stoppedAt-.118)<1e-9))
-ok('rhythm uses grouped velocity accents',soundHost.gains.slice(-8).every((g,i)=>Math.abs(g.gain.value-.6*1.6*[1,.73,.88,.70,.96,.75,.85,.76][i])<1e-9))
+ok('rhythm uses grouped velocity accents',soundHost.gains.slice(-8).every((g,i)=>Math.abs(g.gain.value-.4*1.6*[1,.73,.88,.70,.96,.75,.85,.76][i])<1e-9))
 const played=soundHost.started.length;soundHost.advance(1500)
 ok('rhythm never plays more notes without input',soundHost.started.length===played)
 soundHost.api.slap('press',false)

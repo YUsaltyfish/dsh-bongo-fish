@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // dsh-bongo-fish · 宿主半（Host half）
 // ----------------------------------------------------------------------------
 // 职责只有四件：
@@ -17,7 +17,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const PKG_ROOT = path.dirname(fileURLToPath(import.meta.url))
-const VERSION = '0.4.1'
+const VERSION = '0.4.3'
 const BASE = '/dsh-bongo-fish'
 const WIDGET_PATH = BASE + '/widget.js'
 
@@ -37,7 +37,7 @@ const SOUND_EXT = ['wav', 'mp3', 'ogg', 'm4a', 'aac', 'flac']
 // 组件模型：本体 + 上手 / 下手 / 弹跳手；下样式2是可选变体。
 // 清单与素材路由共用固定白名单；旧左右手定位图保留在磁盘但不再使用。
 const ART_REQUIRED = ['body', 'hand-up', 'hand-down', 'hand-bounce']
-const ART_ALL = ART_REQUIRED.concat('hand-down-alt')
+const ART_ALL = ART_REQUIRED.concat('hand-down2')
 const MIME = {
   png: 'image/png', gif: 'image/gif', webp: 'image/webp',
   jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml',

@@ -1,4 +1,4 @@
-﻿/* ============================================================================
+/* ============================================================================
  * dsh-bongo-fish · 浏览器半（Browser half）
  * ----------------------------------------------------------------------------
  * 一只带爪子的小鲸鱼：在 DSH 输入框里每敲一下键，爪子拍下去（切换"拍下"图层）
@@ -21,7 +21,7 @@
   if (window.__dshBongoFish) return
 
   var BASE = '/dsh-bongo-fish'
-  var VERSION = '0.4.1'
+  var VERSION = '0.4.3'
   var EVENTS_PATH = BASE + '/events'
   var STORE = 'dsh-bongo-fish:v1'
   var DEBUG = /[?&]dsh-bongo-fish-debug=1/.test(location.search)
@@ -50,13 +50,13 @@
   // ---------------------------------------------------------------- 配置
   var DEFAULTS = {
     mirrorHands: false,
-    style: 'normal', handWidth: 25, handRatio: 76, handGap: 35, handAxis: 50, handY: 82,
-    downY: 8, downScale: 100, bodyWidth: 100, bodyX: 50, bodyY: 50,
+    style: 'normal', handWidth: 39.2, handRatio: 76, handGap: 56.8, handAxis: 35.2, handY: 89.3,
+    downY: 48.6, downScale: 100, bodyWidth: 100, bodyX: 50, bodyY: 50,
     bounceHeight: 36, bounceDuration: 260, downVariant: 'default',
-    mode: 'top',        // top=贴合点对齐卡片上沿 bottom=对齐下沿 snap=自由磁吸
+    mode: 'snap',        // top=贴合点对齐卡片上沿 bottom=对齐下沿 snap=自由磁吸
     side: 'right',      // left / center / right：贴图盒子贴卡片哪一侧
     inside: false,      // 贴合点落到卡片内侧一点（嵌入变体被 overflow 裁时用）
-    size: 176,          // 贴图显示宽度 px（高度按素材比例自动算）；菜单里有小/中/大/特大四档预设
+    size: 128,          // 贴图显示宽度 px（高度按素材比例自动算）；菜单里有小/中/大/特大四档预设
     gap: 0,             // 贴图与卡片边缘的间距（默认 0 = 贴合点正好压在边线上）
     anchorX: 50,        // 贴合点：横向位置（占图宽 %）—— 默认横向居中（1499 图里的 750px）
     anchorY: 100,     // 贴合点：纵向位置（占图高 %）—— 默认 = 静止轮廓底边（1070 图里的 771px）
@@ -74,29 +74,32 @@
     scope: 'global',    // global=全页面监听（含输入法、标点）；composer=只听输入框
     imeCounts: true,    // 输入法组合中（打拼音那几下）也算按键
     clawDip: 2,         // 「拍下」图层额外下沉多少 px（用来对齐举着/拍下两张图）
-    bodyKick: false,    // 拍下时本体也抖一下（默认关：保持本体不动）
-    volume: 60,         // 0-100
+    bodyKick: true,    // 拍下时本体也抖一下（默认关：保持本体不动）
+    volume: 40,         // 0-100
     sound: true,
     rhythmSound: false, // 用户显式开启后使用水滴律动；关闭保留原音效。
     pitchJitter: 8,     // 音高随机 ±N%（避免机械重复感）
     minGapMs: 25,       // 两次拍下的最小间隔（长按/高速输入不糊）
-    bob: false,         // 待机摇摆（默认关：本体保持不动）
+    bob: true,         // 待机摇摆（默认关：本体保持不动）
     notifyCount: 3,     // 通知时刻（弹出选项卡 / 权限请求 / 一轮结束）拍几下，0~9，0 = 关
     flipWhenLeft: true, // 在输入框左半边时镜像
-    snap: { ref: 'viewport', x: 24, y: 180 },
+    snap: { ref: 'card', edge: 'top', x: 1444.3022766113281 },
+    assetStyle_handDown: 'default', assetStyle_soundHit: 'default',
   }
 
   var HAND_KEYS = ['mirrorHands','handMode','handWidth','handRatio','handGap','handAxis','handY','downY','downScale','bounceHeight','bounceDuration']
   var HAND_DEFAULTS = {
-    normal: {mirrorHands:false,handMode:'random',handWidth:25,handRatio:76,handGap:53.3,handAxis:41.6,handY:82.2,downY:8,downScale:100,bounceHeight:36,bounceDuration:260},
+    normal: {mirrorHands:false,handMode:'random',handWidth:39.2,handRatio:76,handGap:56.8,handAxis:35.2,handY:89.3,downY:48.6,downScale:100,bounceHeight:36,bounceDuration:260},
     bounce: {mirrorHands:false,handMode:'random',handWidth:18.6,handRatio:73,handGap:44.6,handAxis:39.9,handY:90.7,downY:8,downScale:100,bounceHeight:36,bounceDuration:260}
   }
   function newHandProfiles() { return JSON.parse(JSON.stringify(HAND_DEFAULTS)) }
   function loadHandProfile(out, mode) {
     HAND_KEYS.forEach(function(k){out[k]=out.handProfiles[mode][k]})
+    out.mirrorHands=false;out.handProfiles[mode].mirrorHands=false
   }
   function captureHandProfile() {
     if(!cfg.handProfiles)cfg.handProfiles=newHandProfiles()
+    cfg.mirrorHands=false
     HAND_KEYS.forEach(function(k){cfg.handProfiles[cfg.style][k]=cfg[k]})
   }
   function switchHandStyle(mode) {
@@ -362,7 +365,7 @@
   }
   function applyParts() {
     if (ui) syncModeControls()
-    root.querySelector('.dsbf-hand-right').querySelector('.dsbf-hand-motion').style.scale = cfg.mirrorHands ? '-1 1' : '1 1'
+    root.querySelector('.dsbf-hand-right').querySelector('.dsbf-hand-motion').style.scale = '1 1' // 固定为本机当前朝向，不再受旧翻转设置影响
     artEl.classList.toggle('is-bounce', cfg.style === 'bounce')
     imgBody.style.width = cfg.bodyWidth + '%'
     imgBody.style.height = cfg.bodyWidth + '%'
@@ -463,7 +466,7 @@
   var BUILTIN_STYLES = {
     body: [{id:'default',name:'默认本体'}],
     handUp: [{id:'default',name:'默认上手'}],
-    handDown: [{id:'default',name:'默认下手'},{id:'alternate',name:'下手 · 样式二',artKey:'handDownAlt'}],
+    handDown: [{id:'default',name:'默认下手'},{id:'alternate',name:'下手 · 样式二',artKey:'handDown2'}],
     handBounce: [{id:'default',name:'默认萌圆手'}],
     soundHit: [{id:'default',name:'默认音效'},{id:'water',name:'水滴声',url:BASE+'/rhythm-water.mp3'}]
   }
@@ -1342,7 +1345,7 @@
     page=menuPages[2]
     page.appendChild(row('敲键样式', group([radio('normal','正常手','style',function(){clearHeld();applyParts()}),radio('bounce','萌圆手','style',function(){clearHeld();applyParts()})])))
 
-    page.appendChild(row('手部镜像', checkbox('右手水平翻转', 'mirrorHands')))
+
     page.appendChild(row('出手顺序', group([
       radio('random', '随机', 'handMode'),
       radio('alternate', '交替', 'handMode'),
