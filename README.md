@@ -8,13 +8,21 @@
 
 ## 安装
 
+从 GitHub 直装，拉的是仓库最新提交，不经过 npm，也不需要构建：
+
 在 DSH 桌面端「插件 → 添加插件」中输入：
 
 ```text
-dsh-bongo-fish
+github:YUsaltyfish/dsh-bongo-fish
 ```
 
-安装或更新后重启 DSH。若客户端提示同名插件已安装，请先卸载旧版再安装新版。
+粘贴仓库地址 `https://github.com/YUsaltyfish/dsh-bongo-fish` 效果一样。
+
+- **网页端 / 命令行**：`dsh plugin --profile web add github:YUsaltyfish/dsh-bongo-fish`
+- **固定版本**：末尾加 `#提交号`，例如 `github:YUsaltyfish/dsh-bongo-fish#6569197`，以后更新不会悄悄换行为。
+- **更新**：在「添加插件」里再装一次；若版本号没变，说明拉到的还是旧提交，把提交号换成最新的（或先卸载再装）即可。
+- 装完重启 DSH。若客户端提示同名插件已安装，请先卸载旧版再装新版。
+- 本插件是纯 JS 加静态素材，没有构建步骤，pnpm 不会索要构建脚本授权。
 
 ## 功能
 
