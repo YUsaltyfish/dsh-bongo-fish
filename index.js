@@ -17,7 +17,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const PKG_ROOT = path.dirname(fileURLToPath(import.meta.url))
-const VERSION = '0.4.3'
+const VERSION = '0.4.4'
 const BASE = '/dsh-bongo-fish'
 const WIDGET_PATH = BASE + '/widget.js'
 

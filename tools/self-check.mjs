@@ -149,7 +149,7 @@ ok(
   '（这条专门防止 prefix 写错、线上 404）',
 )
 
-// ① 桌面端注入行
+// ① 桌面端注入行（保持稳定的纯脚本注入，不引入 Client bundle）
 const table = []
 h.injections.forEach((fn) => fn(table))
 ok(
@@ -167,6 +167,10 @@ ok('tapIndex 注入了 script 标签', html.includes('<script defer src="' + BAS
 let html2 = html
 h.taps.forEach((fn) => { html2 = fn(html2) })
 ok('tapIndex 不会重复注入', html2.split(BASE + '/widget.js').length - 1 === 1)
+
+// 关插件后宿主路由消失，浏览器半靠 /health 判断存亡
+const pkg = JSON.parse(fs.readFileSync(path.join(PKG, 'package.json'), 'utf8'))
+ok('未引入 Client bundle（避免开机加载失败拖垮界面）', !pkg.dsh.client && !pkg.exports['./client'])
 
 // ③ 路由内容
 const rWidget = await call(find('exact', BASE + '/widget.js'), BASE + '/widget.js')
@@ -186,7 +190,7 @@ const rhythmRes=await call(find('exact',BASE+'/rhythm-water.mp3'),BASE+'/rhythm-
 ok('rhythm has a dedicated bundled audio route',rhythmRes.statusCode===200 && rhythmRes.headers['Content-Type']==='audio/mpeg' && rhythmRes.body.length>0)
 ok('rhythm water asset is not added to the normal sound pool',!man.sounds.hit.some(u=>u.includes('rhythm-water') || u.includes('%E6%B0%B4')))
 
-ok('0.4.3 独立部件模式', man.version === '0.4.3' && man.artMode === 'components', man.artMode)
+ok('0.4.4 独立部件模式', man.version === '0.4.4' && man.artMode === 'components', man.artMode)
 ok('manifest 指向占位本体', typeof man.art.body === 'string' && man.art.body.startsWith(BASE + '/art/body.'), String(man.art.body))
 ok(
   'manifest 指向可左右复用的上手/下手/弹跳手及可选变体',

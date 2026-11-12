@@ -53,6 +53,8 @@ class El {
   closest(s) { return matches(this, s) ? this : this.parentNode?.closest(s) || null }
   contains(n) { return n === this || this.children.some(c => c.contains(n)) }
   addEventListener(type, fn) { (this.events[type] ||= []).push(fn) }
+  removeEventListener(type, fn) { this.events[type] = (this.events[type] || []).filter(f => f !== fn) }
+  removeChild(node) { this.children = this.children.filter(n => n !== node); node.parentNode = null; return node }
   dispatch(type, extra = {}) {
     const e = { target: this, type, prevented: false, stopped: false, preventDefault() { this.prevented = true }, stopPropagation() { this.stopped = true }, ...extra }
     for (const f of this.events[type] || []) f(e)
@@ -63,7 +65,7 @@ class El {
 }
 const STORE = 'dsh-bongo-fish:v1'
 const manifest = {
-  ok: true, version: '0.4.3', artMode: 'components',
+  ok: true, version: '0.4.4', artMode: 'components',
   art: Object.fromEntries(['body','handUp','handDown','handDown2','handBounce'].map(k => [k, '/dsh-bongo-fish/art/' + k + '.png?v=1'])),
   sounds: { hit: ['/sound/hit.wav', '/sound/hit-1.wav', '/sound/hit-2.wav'] }, missing: [],
   dirs: { builtinArtDir: 'fixture/art', builtinSoundDir: 'fixture/sounds', sources: { 'art:body': 'fixture/art', 'sound:hit': 'fixture/sounds' } },
@@ -97,6 +99,12 @@ function boot(saved = {}, options = {}) {
   win.cancelAnimationFrame = id => frames.delete(id)
   win.ResizeObserver = class { constructor(fn) { ros.push(fn) } observe() {} unobserve() {} }
   win.MutationObserver = class { observe() {} }
+  const streams = []
+  // 只有显式要求时才提供 EventSource：默认没有它 → 走轮询分支（老用例依赖这个）
+  if (options.eventSource) win.EventSource = class {
+    constructor(url) { this.url = String(url); streams.push(this) }
+    close() { this.closed = true }
+  }
   if (options.assetRecords) win.indexedDB = {
     open() {
       const request = {}
@@ -119,8 +127,10 @@ function boot(saved = {}, options = {}) {
     createGain() { const g = { gain: { value: 0, events:[],setValueAtTime(v,t){this.events.push(['set',v,t])},linearRampToValueAtTime(v,t){this.events.push(['ramp',v,t])} }, connect() {} }; gains.push(g); return g }
     decodeAudioData(b, resolve) { resolve({ id: b.byteLength }) }
   }
+  const host = { off: false }               // 模拟"插件被关掉后宿主不再有路由"
   win.fetch = async url => {
     requests.push(String(url))
+    if (host.off) return { ok: false, status: 404 }
     if (String(url).includes('manifest.json')) return { ok: true, json: async () => manifest }
     if (String(url).includes('/events')) {
       const since = Number(new URL(url, 'http://fixture').searchParams.get('since') || 0)
@@ -140,11 +150,11 @@ function boot(saved = {}, options = {}) {
   const flushRaf = () => { const q = [...frames.values()]; frames.clear(); q.forEach(f => f(clock)) }
   const key = (type, ch = 'a', extra = {}) => doc.dispatch(type, { key: ch, code: 'Key' + ch.toUpperCase(), isTrusted: true, target: composer, ...extra })
   const hits = () => ['left','right'].filter(side => root.querySelector('.dsbf-stage').classList.contains('is-hit-' + side))
-  return { api, root, doc, win, card, seat, composer, other, advance, flushRaf, key, hits, started, gains, store, ros, requests, feed, now: () => sandbox.Date.now() }
+  return { api, root, doc, win, card, seat, composer, other, advance, flushRaf, key, hits, started, gains, store, ros, requests, feed, timers, frames, host, streams, now: () => sandbox.Date.now() }
 }
 async function settle() { for (let i = 0; i < 20; i++) await Promise.resolve() }
 const h = boot(); const { api, root } = h
-ok('0.4.3 public API mounted', api?.version === '0.4.3')
+ok('0.4.4 public API mounted', api?.version === '0.4.4')
 ok('fallback exists before manifest resolves', root.querySelector('.dsbf-body').src.startsWith('data:image/svg+xml'))
 await settle(); h.flushRaf()
 ok('component manifest body loaded', root.querySelector('.dsbf-body').src === manifest.art.body)
@@ -349,6 +359,44 @@ ok('pause restarts the phrase at its first note',Math.abs(soundHost.started.at(-
 ok('rhythm switch persists',JSON.parse(soundHost.store.get(STORE)).rhythmSound===true)
 rhythmToggle.checked=false;rhythmToggle.dispatch('change');soundHost.advance(100);soundHost.api.slap('press',false)
 ok('disabling rhythm restores original sound and jitter',soundHost.started.at(-1).stoppedAt===undefined && Math.abs(soundHost.started.at(-1).playbackRate.value-.96)<1e-9)
+// --- 关插件后自愈：宿主路由消失 → 看门狗卸载挂件（不需要刷新页面）---
+// 宿主把插件关掉时不会主动通知页面，所以靠看门狗问：连续两次拿不到清单就卸载。
+// 顺带：宿主进程真的挂了/重启了，SSE 流会断，断流时先探一次，不在就当场卸载。
+const dropHost = boot({}, { eventSource: true }); await settle()
+dropHost.host.off = true
+dropHost.streams.at(-1).onerror(); await settle(); await settle()
+ok('a dropped stream with the host gone unmounts without waiting for the watchdog', !dropHost.doc.getElementById('dsh-bongo-fish'))
+// 宿主还在、只是这条流断了 → 退化成轮询，不能误删挂件。
+const softDrop = boot({}, { eventSource: true }); await settle()
+const eventsBefore = softDrop.requests.filter(u => u.includes('/events')).length
+softDrop.streams.at(-1).onerror(); await settle(); await settle()
+ok('a dropped stream on a live host degrades to polling instead of unmounting', !!softDrop.doc.getElementById('dsh-bongo-fish') && softDrop.requests.filter(u => u.includes('/events')).length > eventsBefore)
+const life = boot()
+await settle(); life.flushRaf()
+ok('watchdog running while host is alive', life.api.watchState().watching === true)
+life.advance(4000); await settle()
+ok('healthy host never disposes the widget', !life.api.watchState().fails && !!life.doc.getElementById('dsh-bongo-fish'))
+life.key('keydown')
+life.host.off = true                        // 用户把插件关掉了
+life.advance(2000); await settle()
+ok('single miss still tolerated (no flicker on a hiccup)', !!life.doc.getElementById('dsh-bongo-fish'))
+life.advance(2000); await settle()
+ok('plugin off removes widget and style', !life.doc.getElementById('dsh-bongo-fish') && !life.doc.getElementById('dsbf-style'))
+ok('plugin off clears globals', !life.win.dshBongoFish && !life.win.__dshBongoFish)
+ok('plugin off stops its own timers, keeps only the revive probe', life.timers.size === 1 && life.frames.size === 0)
+ok('plugin off removes document/window listeners', [life.doc, life.win].every(t => Object.values(t.events).every(a => a.length === 0)))
+const beforeDisabled = life.started.length
+life.key('keydown'); life.advance(20000); await settle()
+ok('disposed instance stays silent and never remounts itself', life.started.length === beforeDisabled && !life.doc.getElementById('dsh-bongo-fish'))
+ok('revive probe stays armed while the plugin is off', life.win.__dsbfRevive === true && life.doc.body.querySelectorAll('script').length === 0)
+life.host.off = false                       // 用户把插件重新打开
+life.advance(3500); await settle()
+const reviveScript = life.doc.body.querySelectorAll('script')[0]
+ok('re-enabling the plugin re-injects the browser half without a refresh', !!reviveScript && /\/dsh-bongo-fish\/widget\.js\?revive=/.test(reviveScript.src))
+ok('revive probe disarms once it fires', life.win.__dsbfRevive !== true && life.timers.size === 0)
+const manual = boot(); await settle(); manual.flushRaf()
+manual.api.dispose(); manual.api.dispose()
+ok('explicit dispose is idempotent and removes the widget', !manual.doc.getElementById('dsh-bongo-fish') && !manual.win.dshBongoFish)
 console.log(`\nWidget VM simulation: ${checks-failed}/${checks} passed; ${failed} failed. NOT a real-browser test.`)
 process.exitCode=failed ? 1 : 0
 

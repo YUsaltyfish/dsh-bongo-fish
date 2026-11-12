@@ -20,8 +20,35 @@
   'use strict'
   if (window.__dshBongoFish) return
 
+  // Every browser resource belongs to this widget instance.
+  var disposed = false
+  var cleanupListeners = []
+  var ownedTimeouts = new Set()
+  var ownedIntervals = new Set()
+  var ownedFrames = new Set()
+  var nativeTimeout = window.setTimeout || globalThis.setTimeout
+  var nativeClearTimeout = window.clearTimeout || globalThis.clearTimeout
+  var nativeInterval = window.setInterval || globalThis.setInterval
+  var nativeClearInterval = window.clearInterval || globalThis.clearInterval
+  function setTimeout(fn, ms) {
+    if (disposed) return 0
+    var id = nativeTimeout(function () { ownedTimeouts.delete(id); if (!disposed) fn() }, ms)
+    ownedTimeouts.add(id); return id
+  }
+  function clearTimeout(id) { ownedTimeouts.delete(id); nativeClearTimeout(id) }
+  function setInterval(fn, ms) {
+    if (disposed) return 0
+    var id = nativeInterval(function () { if (!disposed) fn() }, ms)
+    ownedIntervals.add(id); return id
+  }
+  function clearInterval(id) { ownedIntervals.delete(id); nativeClearInterval(id) }
+  function listen(target, type, fn, options) {
+    target.addEventListener(type, fn, options)
+    cleanupListeners.push(function () { target.removeEventListener(type, fn, options) })
+  }
+
   var BASE = '/dsh-bongo-fish'
-  var VERSION = '0.4.3'
+  var VERSION = '0.4.4'
   var EVENTS_PATH = BASE + '/events'
   var STORE = 'dsh-bongo-fish:v1'
   var DEBUG = /[?&]dsh-bongo-fish-debug=1/.test(location.search)
@@ -39,12 +66,17 @@
   // 浏览器能力统一从 window 取（显式取，别依赖裸全局；缺谁都能优雅降级）
   var win = window
   var raf = win.requestAnimationFrame
-    ? function (fn) { return win.requestAnimationFrame(fn) }
+    ? function (fn) { if (disposed) return 0
+        var id = win.requestAnimationFrame(function (time) { ownedFrames.delete(id); if (!disposed) fn(time) })
+        ownedFrames.add(id); return id }
     : function (fn) { return setTimeout(fn, 16) }
   var RO = win.ResizeObserver
   var MO = win.MutationObserver
   var net = win.fetch
-    ? function (url, init) { return win.fetch(url, init) }
+    ? function (url, init) { return win.fetch(url, init).then(function (response) {
+        if (disposed) throw new Error('Widget disposed')
+        return response
+      }) }
     : (typeof fetch === 'function' ? fetch : null)
 
   // ---------------------------------------------------------------- 配置
@@ -301,13 +333,14 @@
   imgRightUp.src = svgUrl('clawRightUp')
   imgRightDown.src = svgUrl('clawRightDown')
   // 素材加载完就知道真实宽高比了 → 盒子跟着变，贴合点才准
-  imgBody.addEventListener('load', syncArtRatio)
+  listen(imgBody, 'load', syncArtRatio)
   // 单手 / 两张整图模式用不到的那几层先收起来
   function hideLayer(img) { if (img) img.style.display = 'none' }
 
   function mount() {
+    if (disposed) return
     if (document.body) document.body.appendChild(root)
-    else document.addEventListener('DOMContentLoaded', function () { document.body.appendChild(root) })
+    else listen(document, 'DOMContentLoaded', function () { document.body.appendChild(root) })
     applySize()
     buildMenu()
   }
@@ -497,7 +530,7 @@
       cfg['assetStyle_'+key]=choice.id;saveCfg()
       if(key==='soundHit') {activateSoundStyle();syncSoundAsset()} else applyArtSources()
     }
-    prev.addEventListener('click',function(){turn(-1)});next.addEventListener('click',function(){turn(1)})
+    listen(prev, 'click',function(){turn(-1)});listen(next, 'click',function(){turn(1)})
     assetCyclers[key]={prev:prev,next:next,label:label}
     return group([prev,label,next])
   }
@@ -546,10 +579,10 @@
       controls.appendChild(buildStyleCycler(key))
       var status=el('div','dsbf-note','默认素材');assetStatus[key]=status;controls.appendChild(status)
       var input=el('input');input.type='file';input.accept='image/png,image/jpeg,image/webp,image/gif';input.style.display='none'
-      input.addEventListener('change',function(){importArt(key,input.files && input.files[0]);input.value=''})
+      listen(input, 'change',function(){importArt(key,input.files && input.files[0]);input.value=''})
       var choose=el('button','dsbf-btn2','选择图片'),reset=el('button','dsbf-btn2','恢复默认');choose.type=reset.type='button'
-      choose.addEventListener('click',function(){input.click()})
-      reset.addEventListener('click',function(){cfg['assetStyle_'+key]='default';saveCfg();applyArtSources()})
+      listen(choose, 'click',function(){input.click()})
+      listen(reset, 'click',function(){cfg['assetStyle_'+key]='default';saveCfg();applyArtSources()})
       controls.appendChild(group([choose,reset]));card.appendChild(preview);card.appendChild(controls);card.appendChild(input);page.appendChild(card)
     })
     buildSoundAsset(page)
@@ -641,12 +674,12 @@
     soundAssetStatus=el('div','dsbf-note','默认音效');controls.appendChild(soundAssetStatus)
     controls.appendChild(el('div','dsbf-note','箭头选择内置音效，选中后固定使用；也可上传本机音频（≤10MB）。律动开关开启时优先使用律动音效，关闭后恢复此处选择。'))
     var input=el('input');input.type='file';input.name='dsbf-customSound';input.accept='audio/*,.wav,.mp3,.ogg,.m4a,.aac,.flac,.webm';input.style.display='none'
-    input.addEventListener('change',function(){importSound(input.files && input.files[0]);input.value=''})
+    listen(input, 'change',function(){importSound(input.files && input.files[0]);input.value=''})
     var choose=el('button','dsbf-btn2','选择音效'),preview=el('button','dsbf-btn2','试听'),reset=el('button','dsbf-btn2','恢复默认音效')
     choose.type=preview.type=reset.type='button'
-    choose.addEventListener('click',function(){input.click()})
-    preview.addEventListener('click',function(){play('hit')})
-    reset.addEventListener('click',function(){resetSound()})
+    listen(choose, 'click',function(){input.click()})
+    listen(preview, 'click',function(){play('hit')})
+    listen(reset, 'click',function(){resetSound()})
     controls.appendChild(group([choose,preview,reset]));card.appendChild(controls);card.appendChild(input);page.appendChild(card)
   }
   function wireArt(img, url, label, onFail) {
@@ -702,6 +735,7 @@
   var lastPlay = 0
 
   function audioCtx() {
+    if (disposed) return null
     if (ac) return ac
     try { ac = new (window.AudioContext || window.webkitAudioContext)() } catch (e) { ac = null }
     return ac
@@ -789,6 +823,7 @@
     return Math.min(fixed.value/Math.max(played.value*.83,1e-8), .92/Math.max(played.peak,1e-8))
   }
   function play(name) {
+    if (disposed) return
     if (!cfg.sound) return
     var rhythmic = name === 'hit' && cfg.rhythmSound && rhythmBuffer
     if (cfg.rhythmSound && !rhythmBuffer) loadRhythmSound()
@@ -851,6 +886,7 @@
   // 敲键的反馈都从这里出去：只切手部那几层，本体与另一只手都不动
   // both=true → 两只手一起拍（同按两键 / 长按）
   function slap(source, both) {
+    if (disposed) return
     var t = nowMs()
     if (source !== 'press' && t - lastSlap < cfg.minGapMs) return
     lastSlap = t
@@ -983,10 +1019,10 @@
     Object.keys(releaseTimers).forEach(function(k){clearTimeout(releaseTimers[k])});releaseTimers={};release()
   }
 
-  document.addEventListener('keydown', onKeyDown, true)
-  document.addEventListener('keyup', onKeyUp, true)
-  window.addEventListener('blur', clearHeld)
-  document.addEventListener('visibilitychange',function(){if(document.visibilityState!=='visible')clearHeld()})
+  listen(document, 'keydown', onKeyDown, true)
+  listen(document, 'keyup', onKeyUp, true)
+  listen(window, 'blur', clearHeld)
+  listen(document, 'visibilitychange',function(){if(document.visibilityState!=='visible')clearHeld()})
 
   // ---------------------------------------------------------------- 位置引擎
   var rafId = 0
@@ -997,6 +1033,7 @@
 
   function cardEl() { return document.querySelector('[data-composer-card]') }
   function schedule() {
+    if (disposed) return
     // 页面隐藏时浏览器会暂停 rAF，此时直接算，避免"排了一次却永远不执行"把后续刷新全堵住
     if (document.visibilityState !== 'visible') { place(); return }
     if (!rafId) rafId = raf(place)
@@ -1152,13 +1189,13 @@
   // 拖动：拖一下即进入「自由磁吸」，落在吸附范围内会自动吸上去
   // —— 事件挂在 hitbox（静止轮廓）上，空白区域完全不吃鼠标
   var drag = null
-  hitbox.addEventListener('pointerdown', function (e) {
+  listen(hitbox, 'pointerdown', function (e) {
     if (e.button !== 0) return
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: curX, oy: curY, moved: false }
     try { hitbox.setPointerCapture(e.pointerId) } catch (err) {}
     e.preventDefault()
   })
-  hitbox.addEventListener('pointermove', function (e) {
+  listen(hitbox, 'pointermove', function (e) {
     if (!drag || e.pointerId !== drag.id) return
     var dx = e.clientX - drag.x
     var dy = e.clientY - drag.y
@@ -1181,10 +1218,11 @@
     if (moved) magnetize(curX, curY)
     else toggleMenu()
   }
-  hitbox.addEventListener('pointerup', endDrag)
-  hitbox.addEventListener('pointercancel', endDrag)
+  listen(hitbox, 'pointerup', endDrag)
+  listen(hitbox, 'pointercancel', endDrag)
 
   // 跟踪信号：ResizeObserver（同帧）+ resize/scroll/mutation（合并到 rAF）
+  var mo = null
   var ro = null
   if (RO) {
     ro = new RO(function () {
@@ -1195,16 +1233,17 @@
     })
     ro.observe(document.documentElement)
   }
-  window.addEventListener('resize', schedule)
-  window.addEventListener('scroll', schedule, true)
-  document.addEventListener('visibilitychange', function () {
+  listen(window, 'resize', schedule)
+  listen(window, 'scroll', schedule, true)
+  listen(document, 'visibilitychange', function () {
     if (document.visibilityState === 'visible') {
       rafId = 0        // 可能残留着隐藏期间没执行的 rAF，先清掉再排
       schedule()
     }
   })
   if (MO) {
-    new MO(schedule).observe(document.body || document.documentElement, {
+    mo = new MO(schedule)
+    mo.observe(document.body || document.documentElement, {
       childList: true,
       subtree: true,
     })
@@ -1236,7 +1275,7 @@
     input.name = 'dsbf-' + key
     input.value = String(value)
     input.checked = cfg[key] === value
-    input.addEventListener('change', function () {
+    listen(input, 'change', function () {
       if (!input.checked) return
       if(key==='style')switchHandStyle(value)
       else cfg[key] = value
@@ -1256,7 +1295,7 @@
     input.type = 'checkbox'
     input.name = 'dsbf-' + key
     input.checked = !!cfg[key]
-    input.addEventListener('change', function () {
+    listen(input, 'change', function () {
       cfg[key] = input.checked
       saveCfg()
       applySize()
@@ -1279,7 +1318,7 @@
     input.step = String(step)
     input.value = String(cfg[key])
     var out = el('span', 'dsbf-num', text(cfg[key]))   // 数值右对齐固定宽度，不会被滑块挤没
-    input.addEventListener('input', function () {
+    listen(input, 'input', function () {
       cfg[key] = Number(input.value)
       out.textContent = text(cfg[key])
       saveCfg()
@@ -1289,11 +1328,11 @@
       if (after) after()
     })
     // 滑块拖动期间 pointermove 可能跑到别的元素上，这里把指针锁在自己身上更稳
-    input.addEventListener('pointerdown', function (e) { e.stopPropagation() })
+    listen(input, 'pointerdown', function (e) { e.stopPropagation() })
     wrap.appendChild(input)
     wrap.appendChild(out)
     var reset=el('button','dsbf-reset','↺');reset.type='button';reset.title='恢复此项默认值'
-    reset.addEventListener('click',function(){cfg[key]=HAND_KEYS.indexOf(key)>=0?HAND_DEFAULTS[cfg.style][key]:DEFAULTS[key];input.value=String(cfg[key]);out.textContent=text(cfg[key]);saveCfg();applySize();lastKey='';schedule();if(after)after()})
+    listen(reset, 'click',function(){cfg[key]=HAND_KEYS.indexOf(key)>=0?HAND_DEFAULTS[cfg.style][key]:DEFAULTS[key];input.value=String(cfg[key]);out.textContent=text(cfg[key]);saveCfg();applySize();lastKey='';schedule();if(after)after()})
     wrap.appendChild(reset)
     ui['s-' + key] = { input: input, out: out, text: text }
     return wrap
@@ -1322,7 +1361,7 @@
     var tabs=el('div','dsbf-tabs')
     names.forEach(function(name,i){
       var button=el('button','dsbf-tab',name);button.type='button'
-      button.addEventListener('click',function(){selectMenuPage(i)})
+      listen(button, 'click',function(){selectMenuPage(i)})
       tabs.appendChild(button);pageButtons.push(button)
       menuPages.push(el('div','dsbf-page'))
     })
@@ -1372,7 +1411,7 @@
     ui.info = el('div', 'dsbf-note')
     page.appendChild(ui.info)
     var resetAll=el('button','dsbf-btn2','恢复布局与效果默认值');resetAll.type='button'
-    resetAll.addEventListener('click',function(){Object.keys(DEFAULTS).forEach(function(k){cfg[k]=JSON.parse(JSON.stringify(DEFAULTS[k]))});cfg.handProfiles=newHandProfiles();cfg.handProfilesVersion=1;loadHandProfile(cfg,cfg.style);cfg.layoutVersion=2;clearHeld();saveCfg();applySize();lastKey='';schedule();syncMenu();loadManifest()})
+    listen(resetAll, 'click',function(){Object.keys(DEFAULTS).forEach(function(k){cfg[k]=JSON.parse(JSON.stringify(DEFAULTS[k]))});cfg.handProfiles=newHandProfiles();cfg.handProfilesVersion=1;loadHandProfile(cfg,cfg.style);cfg.layoutVersion=2;clearHeld();saveCfg();applySize();lastKey='';schedule();syncMenu();loadManifest()})
     page.appendChild(resetAll)
     var notes=[
       '整体大小会缩放本体和双手；吸附方式决定挂件相对输入框的位置。自由磁吸需拖动挂件确定落点。',
@@ -1391,14 +1430,14 @@
     var footer=el('div','dsbf-pagination')
     var prev=el('button','dsbf-btn2','‹ 上一页'),next=el('button','dsbf-btn2','下一页 ›')
     prev.type=next.type='button';ui.pageCount=el('span','dsbf-page-count')
-    prev.addEventListener('click',function(){selectMenuPage(menuPage-1)})
-    next.addEventListener('click',function(){selectMenuPage(menuPage+1)})
+    listen(prev, 'click',function(){selectMenuPage(menuPage-1)})
+    listen(next, 'click',function(){selectMenuPage(menuPage+1)})
     footer.appendChild(prev);footer.appendChild(ui.pageCount);footer.appendChild(next);menu.appendChild(footer)
     selectMenuPage(0)
     syncMenuInfo()
     // 点面板空白处别把输入框焦点抢走；但**绝不能**对控件本身 preventDefault ——
     // 那会把 <input type="range"> 的原生拖动行为一起干掉（滑块就拖不动了）
-    menu.addEventListener('mousedown', function (e) {
+    listen(menu, 'mousedown', function (e) {
       var t = e.target
       var tag = t && t.tagName ? String(t.tagName).toUpperCase() : ''
       if (tag !== 'INPUT' && tag !== 'LABEL' && tag !== 'BUTTON') e.preventDefault()
@@ -1494,19 +1533,19 @@
   }
   function toggleMenu() { if (menuOpen) closeMenu(); else openMenu() }
 
-  btn.addEventListener('click', function (e) { e.stopPropagation(); toggleMenu() })
-  btn.addEventListener('mousedown', function (e) { e.preventDefault() })
-  root.addEventListener('contextmenu', function (e) {
+  listen(btn, 'click', function (e) { e.stopPropagation(); toggleMenu() })
+  listen(btn, 'mousedown', function (e) { e.preventDefault() })
+  listen(root, 'contextmenu', function (e) {
     e.preventDefault()
     e.stopPropagation()
     openMenu()
   })
-  document.addEventListener('pointerdown', function (e) {
+  listen(document, 'pointerdown', function (e) {
     if (!menuOpen) return
     if (root.contains(e.target)) return
     closeMenu()
   }, true)
-  document.addEventListener('keydown', function (e) {
+  listen(document, 'keydown', function (e) {
     if (menuOpen && e.key === 'Escape') closeMenu()
   }, true)
 
@@ -1520,6 +1559,7 @@
   var notifySource = null
 
   function deliverNotify(item) {
+    if (disposed) return false
     if (!item || typeof item.rev !== 'number' || item.rev <= notifyRev) return false
     notifyRev = item.rev
     // 陈旧事件（页面刚打开时补到的历史）只推进游标，不补动作
@@ -1571,7 +1611,13 @@
         es.onerror = function () {
           try { es.close() } catch (err) {}
           notifySource = null
-          startNotifyPolling()          // 流断了就退化成轮询，别静默丢掉所有通知
+          // 流断了先问一句"宿主还在吗"：路由被撤（插件被关）就直接卸载；
+          // 只是这条流断了（重启/切网）才退化成轮询，别静默丢掉所有通知。
+          checkHost().then(function (alive) {
+            if (disposed) return
+            if (!alive) { warn('通知流断开且宿主已不可用，挂件自我卸载'); dispose(); return }
+            startNotifyPolling()
+          })
         }
         notifyPollOnce()                // 顺手把游标对齐一次
         return
@@ -1580,10 +1626,121 @@
     startNotifyPolling()
   }
 
+  // ---------------------------------------------------------------- 存活看门狗
+  // 插件在列表里被关掉后，宿主会撤掉 /dsh-bongo-fish 的所有路由，但页面里已经跑起来的
+  // 这份脚本不会自己消失 —— 症状就是"关了插件，挂件还在界面上"。
+  // 所以定期问一次宿主"你还在吗"：连续两次拿不到清单（404、连不上、返回的不是清单 JSON）
+  // 就自我卸载，不用刷新页面。另外 SSE 流被服务端掐断时先探一次，正常断开=宿主已撤路由，
+  // 立刻卸载，不必等下一轮看门狗。
+  // 探的是 /manifest.json 而不是 /health：后者每次都会整份读一遍 widget.js，太重。
+  var WATCH_PATH = BASE + '/manifest.json'
+  var WATCH_MS = 2000
+  var WATCH_STRIKES = 2
+  var watchTimer = null
+  var watchFails = 0
+  var watchProbes = 0
+
+  function stopWatch() {
+    if (watchTimer === null) return
+    nativeClearInterval(watchTimer)
+    watchTimer = null
+  }
+
+  /** 宿主还在不在。返回 Promise<boolean>；任何异常都算"不在"。 */
+  function checkHost() {
+    if (disposed) return Promise.resolve(true) // 已经卸载了就别再探（net 在卸载后一律 reject）
+    if (!net) return Promise.resolve(true)     // 没 fetch 能力就当它一直在（降级不自我删除）
+    return net(WATCH_PATH, { credentials: 'same-origin', cache: 'no-store' }).then(function (res) {
+      if (!res || !res.ok) return false
+      // 有的部署会给未知路径回 200 + HTML（前端兜底页），所以必须验内容而不能只看状态码
+      return res.json().then(function (data) {
+        return !!(data && typeof data === 'object' && data.ok !== false)
+      }, function () { return false })
+    }, function () { return false })
+  }
+
+  function probeHost() {
+    if (disposed || !net) return Promise.resolve(false)
+    watchProbes += 1
+    return checkHost().then(function (alive) {
+      if (disposed) return alive
+      if (alive) { watchFails = 0; return true }
+      watchFails += 1
+      log('看门狗：宿主未响应（' + watchFails + '/' + WATCH_STRIKES + '）')
+      if (watchFails >= WATCH_STRIKES) {
+        warn('插件已关闭，挂件自我卸载')
+        dispose()
+      }
+      return false
+    })
+  }
+  function startWatch() {
+    if (watchTimer !== null || disposed) return
+    watchTimer = nativeInterval(function () {
+      // 页面在后台时不探：省流量，也避免休眠回来连着几次失败把挂件误删
+      if (document.visibilityState !== 'hidden') probeHost()
+    }, WATCH_MS)
+  }
+
+  // ---------------------------------------------------------------- 复活
+  // 关掉插件 → 挂件卸载后不该就此"死"在页面里：重新打开插件（不用重启 DSH）时，
+  // 由这个很轻的探针把脚本重新挂回页面。宿主没开就每 3 秒问一次，问到了就加载。
+  function startRevive() {
+    if (win.__dsbfRevive || !win.fetch) return
+    win.__dsbfRevive = true
+    var timer = nativeInterval(function () {
+      if (document.visibilityState === 'hidden') return
+      win.fetch(WATCH_PATH, { credentials: 'same-origin', cache: 'no-store' }).then(function (res) {
+        if (!res || !res.ok) return
+        return res.json().then(function (data) {
+          if (!data || data.ok === false) return
+          nativeClearInterval(timer)
+          win.__dsbfRevive = false
+          reviveLoad()
+        }, function () {})
+      }, function () {}).catch(function () {})
+    }, 3000)
+  }
+
+  /** 用带缓存穿透参数的新 <script> 重新执行一遍浏览器半。 */
+  function reviveLoad() {
+    log('插件重新打开，挂件回归')
+    var script = document.createElement('script')
+    script.src = BASE + '/widget.js?revive=' + Date.now()
+    script.onerror = function () {        // 宿主刚好又关了/还没起好，等下一轮
+      script.onerror = null
+      setTimeout(startRevive, 5000)
+    }
+    ;(document.body || document.head || document.documentElement).appendChild(script)
+  }
+
   // ---------------------------------------------------------------- 对外接口
   // 其他脚本/插件可以订阅每次拍下，或自己触发一下（这就是"反馈送进插件"的入口）。
+  function dispose() {
+    if (disposed) return
+    disposed = true
+    stopWatch()
+    if (notifySource) { try { notifySource.close() } catch (e) {} }
+    notifySource = null
+    ownedTimeouts.forEach(function (id) { nativeClearTimeout(id) }); ownedTimeouts.clear()
+    ownedIntervals.forEach(function (id) { nativeClearInterval(id) }); ownedIntervals.clear()
+    notifyTimer = null
+    ownedFrames.forEach(function (id) { if (win.cancelAnimationFrame) win.cancelAnimationFrame(id) }); ownedFrames.clear()
+    cleanupListeners.forEach(function (off) { try { off() } catch (e) {} }); cleanupListeners.length = 0
+    if (ro && ro.disconnect) ro.disconnect()
+    if (mo && mo.disconnect) mo.disconnect()
+    downKeys.clear()
+    listeners.length = 0
+    if (ac && ac.close) { try { var closing = ac.close(); if (closing && closing.catch) closing.catch(function () {}) } catch (e) {} }
+    if (root.parentNode) root.parentNode.removeChild(root)
+    var style = document.getElementById('dsbf-style')
+    if (style && style.parentNode) style.parentNode.removeChild(style)
+    if (window.dshBongoFish === api) { delete window.dshBongoFish; delete window.__dshBongoFish }
+    startRevive()          // 卸载后留一个很轻的探针：插件重新打开时挂件自己回来
+  }
   window.__dshBongoFish = true
-  window.dshBongoFish = {
+  var api = window.dshBongoFish = {
+    dispose: dispose,
     version: VERSION,
     config: cfg,
     slap: slap,
@@ -1601,6 +1758,7 @@
     },
     deliverNotify: deliverNotify,
     notifyState: function () { return { rev: notifyRev, polling: !!notifyTimer, streaming: !!notifySource } },
+    watchState: function () { return { watching: watchTimer !== null, probes: watchProbes, fails: watchFails } },
     openMenu: openMenu,
     closeMenu: closeMenu,
     reloadManifest: loadManifest,
@@ -1615,6 +1773,7 @@
   loadCustomSound()
   if (cfg.rhythmSound) loadRhythmSound()
   connectNotify()
+  startWatch()
   // 这一行不挑调试开关：第一次装完就该能在控制台确认"挂件活着"
   try {
     console.log('%c[bongo-fish]%c 已注入 v' + VERSION + '（想看详细日志给地址加 ?dsh-bongo-fish-debug=1）',
